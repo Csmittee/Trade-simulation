@@ -407,3 +407,38 @@ a { color: var(--gold); }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
 ::-webkit-scrollbar-thumb { background: var(--bg-raised); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Market Status — Sim Mode (Phase 1 fix) ─────────────────────────────────── */
+.market-status.sim {
+  color: var(--gold);
+  background: var(--gold-dim);
+  border: 1px solid var(--border-accent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.market-status.open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.market-status.closed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.sim-mode-note {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.75;
+  line-height: 1.4;
+}
