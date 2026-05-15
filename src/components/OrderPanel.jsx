@@ -106,10 +106,17 @@ export default function OrderPanel({
         stopLoss:   parseFloat(stopLoss)   || null,
         takeProfit: parseFloat(takeProfit) || null,
         strategy:   mode,
-        simMode,    // tag the trade so trade log can note it was placed in sim mode
+        simMode,
       });
-      if (result?.error)   setError(result.error);
+      if (result?.error) {
+        setError(`Order rejected: ${result.error}`);
+        return;
+      }
       if (result?.warning) setWarning(result.warning);
+      // Success — clear fields so user sees the form reset as confirmation
+      setQty("");
+      setStopLoss("");
+      setTakeProfit("");
     } else {
       const result = onSell(null, parseFloat(price));
       if (result?.error) setError(result.error);
@@ -260,7 +267,7 @@ export default function OrderPanel({
           placeholder="Optional — auto-closes if price rises here" step="0.01" />
       </div>
 
-      {/* ── Order Summary ── */}
+      {/* ── Order Summary + P&L Helper ── */}
       {tradeCost > 0 && (
         <div className="order-summary">
           <span>Est. Cost: <strong>฿{tradeCost.toLocaleString()}</strong></span>
@@ -272,6 +279,35 @@ export default function OrderPanel({
           )}
         </div>
       )}
+
+      {/* P&L Helper — shows max loss / max gain in THB based on SL/TP + qty */}
+      {(() => {
+        const q  = parseFloat(qty)        || 0;
+        const p  = parseFloat(price)      || 0;
+        const sl = parseFloat(stopLoss)   || 0;
+        const tp = parseFloat(takeProfit) || 0;
+        if (!q || !p) return null;
+        const maxLoss = sl > 0 ? ((sl - p) * q).toFixed(0) : null;  // negative = loss
+        const maxGain = tp > 0 ? ((tp - p) * q).toFixed(0) : null;  // positive = gain
+        if (!maxLoss && !maxGain) return null;
+        return (
+          <div className="pnl-helper">
+            <span className="pnl-helper-title">P&L at targets</span>
+            {maxLoss !== null && (
+              <span className="pnl-loss">
+                Max loss: ฿{parseInt(maxLoss).toLocaleString()}
+                {sl > 0 && <span className="pnl-sub"> if price hits ฿{sl.toLocaleString()}</span>}
+              </span>
+            )}
+            {maxGain !== null && (
+              <span className="pnl-gain">
+                Max gain: +฿{parseInt(maxGain).toLocaleString()}
+                {tp > 0 && <span className="pnl-sub"> if price hits ฿{tp.toLocaleString()}</span>}
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Errors / Warnings ── */}
       {error   && <div className="order-error">⚠ {error}</div>}
