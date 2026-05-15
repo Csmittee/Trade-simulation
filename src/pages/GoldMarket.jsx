@@ -137,6 +137,7 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
             onBuy={handleBuy}
             onSell={handleSell}
             marketOpen={marketOpen}
+            enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
           />
         </div>
