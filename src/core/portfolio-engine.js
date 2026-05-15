@@ -134,6 +134,8 @@ export function executeSell(portfolio, positionId, currentPrice) {
  */
 export function updatePositionPrices(portfolio, priceMap) {
   // priceMap: { "XAUUSD": 2350.50, "PTT.BK": 42.75, ... }
+  // Guard: KV-restored portfolio may be missing arrays if saved in old format
+  if (!portfolio?.positions) return { ...portfolio, positions: [], closedTrades: portfolio?.closedTrades || [] };
   const updatedPositions = portfolio.positions.map(pos => {
     const currentPrice = priceMap[pos.symbol];
     if (!currentPrice) return pos;
@@ -162,7 +164,22 @@ export function updatePositionPrices(portfolio, priceMap) {
  * Calculate full portfolio summary for display.
  */
 export function calcPortfolioSummary(portfolio, priceMap = {}) {
-  const updated = updatePositionPrices(portfolio, priceMap);
+  // Guard: portfolio may be null or incomplete if KV hasn't loaded yet
+  if (!portfolio) return {
+    balance: 0, totalPositionValue: 0, totalEquity: 0,
+    totalReturn: 0, totalReturnPct: 0, totalUnrealisedPnL: 0,
+    realisedPnL: 0, winRate: 0, avgGain: 0, avgLoss: 0,
+    maxDrawdown: 0, openPositionCount: 0, closedTradeCount: 0,
+  };
+  // Ensure arrays exist even if KV returned an old or partial object
+  const safe = {
+    ...portfolio,
+    positions:       Array.isArray(portfolio.positions)    ? portfolio.positions    : [],
+    closedTrades:    Array.isArray(portfolio.closedTrades) ? portfolio.closedTrades : [],
+    startingBalance: portfolio.startingBalance || portfolio.balance || 1000000,
+    balance:         portfolio.balance || 0,
+  };
+  const updated = updatePositionPrices(safe, priceMap);
 
   const totalUnrealisedPnL = updated.positions.reduce(
     (sum, p) => sum + (p.unrealisedPnL || 0), 0
@@ -174,29 +191,29 @@ export function calcPortfolioSummary(portfolio, priceMap = {}) {
   }, 0);
 
   const totalEquity = updated.balance + totalPositionValue;
-  const totalReturn = totalEquity - portfolio.startingBalance;
-  const totalReturnPct = (totalReturn / portfolio.startingBalance) * 100;
+  const totalReturn = totalEquity - safe.startingBalance;
+  const totalReturnPct = (totalReturn / safe.startingBalance) * 100;
 
   // Session P&L from closed trades
-  const realisedPnL = portfolio.closedTrades.reduce((sum, t) => sum + t.pnl, 0);
+  const realisedPnL = safe.closedTrades.reduce((sum, t) => sum + t.pnl, 0);
 
   // Win rate
-  const winners = portfolio.closedTrades.filter(t => t.pnl > 0);
-  const winRate = portfolio.closedTrades.length > 0
-    ? (winners.length / portfolio.closedTrades.length) * 100
+  const winners = safe.closedTrades.filter(t => t.pnl > 0);
+  const winRate = safe.closedTrades.length > 0
+    ? (winners.length / safe.closedTrades.length) * 100
     : 0;
 
   // Avg gain vs avg loss
   const avgGain = winners.length > 0
     ? winners.reduce((s, t) => s + t.pnlPct, 0) / winners.length
     : 0;
-  const losers = portfolio.closedTrades.filter(t => t.pnl < 0);
+  const losers = safe.closedTrades.filter(t => t.pnl < 0);
   const avgLoss = losers.length > 0
     ? losers.reduce((s, t) => s + t.pnlPct, 0) / losers.length
     : 0;
 
   // Max drawdown (from peak equity across closed trades)
-  const maxDrawdown = calcMaxDrawdown(portfolio.closedTrades, portfolio.startingBalance);
+  const maxDrawdown = calcMaxDrawdown(safe.closedTrades, safe.startingBalance);
 
   return {
     balance: updated.balance,
@@ -211,7 +228,7 @@ export function calcPortfolioSummary(portfolio, priceMap = {}) {
     avgLoss,
     maxDrawdown,
     openPositionCount: updated.positions.length,
-    closedTradeCount: portfolio.closedTrades.length,
+    closedTradeCount: safe.closedTrades.length,
   };
 }
 
@@ -220,6 +237,8 @@ export function calcPortfolioSummary(portfolio, priceMap = {}) {
  * Returns array of { hour: "10:00", pnl: number } for chart display.
  */
 export function calcHourlyPnL(closedTrades) {
+  // Guard: closedTrades may be undefined if called before portfolio loads
+  if (!Array.isArray(closedTrades) || closedTrades.length === 0) return [];
   const hourlyMap = {};
 
   closedTrades.forEach(trade => {
