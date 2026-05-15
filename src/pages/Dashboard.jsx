@@ -129,10 +129,11 @@ export default function Dashboard() {
       const saved = await kvGet("portfolio:state");
       const settings = await kvGet("settings:enforce_hours");
 
-      if (saved) {
+      if (saved && (saved.balance > 0 || saved.startingBalance > 0)) {
         setPortfolio(saved);
       }
-      // If no saved state — BalanceModal will show (portfolio === null)
+      // If no saved state OR saved state is corrupted (balance=0) → show BalanceModal
+      // This handles cases where a bad deploy wipes the portfolio state in KV
 
       if (settings !== null) {
         setEnforceHours(settings === "true" || settings === true);
