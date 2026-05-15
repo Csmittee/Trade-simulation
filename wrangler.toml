@@ -1,0 +1,11 @@
+# workers/gold-proxy/wrangler.toml
+# Deploy with: wrangler deploy (from inside workers/gold-proxy/ folder)
+
+name = "tts-gold-proxy"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+# No KV or D1 bindings needed for gold proxy — it's a pure data fetch worker
