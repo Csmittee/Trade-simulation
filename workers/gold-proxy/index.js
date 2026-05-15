@@ -103,29 +103,48 @@ async function handleGoldRequest(request, env, ctx) {
 // ── Data Sources ──────────────────────────────────────────────────────────────
 
 async function fetchXAUUSD() {
-  // Primary: metals.live (free, no key required for basic endpoint)
+  const errors = [];
+
+  // Source 1: Frankfurter (European Central Bank based, very reliable, no key)
   try {
-    const res = await fetch("https://metals.live/api/spot/gold", {
-      headers: { "Accept": "application/json" },
-      cf: { cacheTtl: 55, cacheEverything: true }, // cache 55s at Cloudflare edge
-    });
-    if (!res.ok) throw new Error(`metals.live returned ${res.status}`);
-    const data = await res.json();
-    // metals.live returns { price: number, ... }
-    if (data?.price) return parseFloat(data.price);
-    throw new Error("Unexpected metals.live response shape");
-  } catch (primaryErr) {
-    // Fallback: Yahoo Finance XAUUSD=X
+    const res = await fetch(
+      "https://api.frankfurter.app/latest?from=XAU&to=USD",
+      { headers: { "Accept": "application/json" } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const price = data?.rates?.USD;
+      if (price && price > 100) return parseFloat(price);
+    }
+  } catch (e) { errors.push(`frankfurter: ${e.message}`); }
+
+  // Source 2: Yahoo Finance XAUUSD=X
+  try {
     const res = await fetch(
       "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?interval=1m&range=1d",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
+      { headers: { "User-Agent": "Mozilla/5.0 (compatible; TTS/1.0)" } }
     );
-    if (!res.ok) throw new Error(`Yahoo Finance fallback returned ${res.status}`);
-    const data = await res.json();
-    const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-    if (!price) throw new Error("Cannot parse Yahoo Finance gold response");
-    return parseFloat(price);
-  }
+    if (res.ok) {
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (price && price > 100) return parseFloat(price);
+    }
+  } catch (e) { errors.push(`yahoo: ${e.message}`); }
+
+  // Source 3: metals.live — handle both { price: n } and [{ price: n }] shapes
+  try {
+    const res = await fetch(
+      "https://metals.live/api/spot/gold",
+      { headers: { "Accept": "application/json" } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const price = Array.isArray(data) ? data[0]?.price : data?.price;
+      if (price && price > 100) return parseFloat(price);
+    }
+  } catch (e) { errors.push(`metals.live: ${e.message}`); }
+
+  throw new Error(`All XAUUSD sources failed: ${errors.join(" | ")}`);
 }
 
 async function fetchTHBRate() {
