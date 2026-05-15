@@ -29,8 +29,11 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
   } = useGoldMarket({ portfolio, setPortfolio, enforceHours });
 
   const summary = calcPortfolioSummary(portfolio);
-  const hourlyPnL = calcHourlyPnL(portfolio.closedTrades.filter(t => t.market === "gold"));
-  const goldPositions = portfolio.positions.filter(p => p.market === "gold");
+  // Guard: arrays may be missing if portfolio loaded from old KV format
+  const closedTrades  = Array.isArray(portfolio?.closedTrades) ? portfolio.closedTrades : [];
+  const positions     = Array.isArray(portfolio?.positions)    ? portfolio.positions    : [];
+  const hourlyPnL     = calcHourlyPnL(closedTrades.filter(t => t.market === "gold"));
+  const goldPositions = positions.filter(p => p.market === "gold");
 
   const currentPrice = activeSymbol === "THAI_GOLD_BAHT"
     ? goldData?.thaiGold?.price
