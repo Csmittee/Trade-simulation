@@ -1,0 +1,8 @@
+# wrangler.toml — ROOT LEVEL (not the workers/gold-proxy one)
+# This tells Cloudflare Pages how to deploy the frontend
+
+name = "trade-simulation"
+compatibility_date = "2025-01-01"
+
+[site]
+bucket = "./dist"
