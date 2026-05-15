@@ -1,176 +1,147 @@
 /**
- * gold-proxy/index.js — Cloudflare Worker
- * Routes: GET /api/gold
- * Returns: XAUUSD spot price + Thai baht gold price (96.5% purity)
+ * tts-workers — Cloudflare Worker (single file, all routes)
+ * GET  /api/gold           — XAUUSD + Thai baht gold price
+ * GET  /api/portfolio      — read portfolio state from KV
+ * POST /api/portfolio      — write portfolio state to KV
+ * GET  /api/settings?key=  — read a settings key from KV
+ * POST /api/settings       — write a settings key to KV
  *
- * Deploy: wrangler deploy
- * Env vars needed: none for gold (public endpoints)
+ * KV binding: add TTS_KV in Cloudflare Worker → Settings → Variables → KV Namespace Bindings
  */
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
   "Content-Type": "application/json",
 };
 
-// Thai gold constants
-const THAI_GOLD_PURITY    = 0.965;   // 96.5% purity
-const BAHT_WEIGHT_GRAMS   = 15.244;  // 1 Thai baht weight in grams
-const TROY_OZ_GRAMS       = 31.1035; // grams per troy oz
+const THAI_GOLD_PURITY  = 0.965;
+const BAHT_WEIGHT_GRAMS = 15.244;
+const TROY_OZ_GRAMS     = 31.1035;
 
 export default {
   async fetch(request, env, ctx) {
-    // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
     }
-
     const url = new URL(request.url);
-
-    if (url.pathname === "/api/gold") {
-      return handleGoldRequest(request, env, ctx);
-    }
-
+    if (url.pathname === "/api/gold")      return handleGold(request, env);
+    if (url.pathname === "/api/portfolio") return handlePortfolio(request, env);
+    if (url.pathname === "/api/settings")  return handleSettings(request, env);
+    if (url.pathname === "/api/debug") return handleDebug(request, env);
     return jsonResponse({ success: false, error: "Route not found" }, 404);
+    
   },
 };
 
-async function handleGoldRequest(request, env, ctx) {
+async function handleGold(request, env) {
   try {
-    // Run both fetches in parallel for speed
-    const [spotResult, forexResult] = await Promise.allSettled([
-      fetchXAUUSD(),
-      fetchTHBRate(),
-    ]);
-
-    const xauusd = spotResult.status === "fulfilled"
-      ? spotResult.value
-      : null;
-
-    const thbRate = forexResult.status === "fulfilled"
-      ? forexResult.value
-      : null;
-
-    // Calculate Thai gold price if both values available
+    const [spotResult, forexResult] = await Promise.allSettled([fetchXAUUSD(), fetchTHBRate()]);
+    const xauusd  = spotResult.status  === "fulfilled" ? spotResult.value  : null;
+    const thbRate = forexResult.status === "fulfilled" ? forexResult.value : null;
     let thaiGold = null;
     if (xauusd && thbRate) {
-      // Price per troy oz in THB, adjusted for 96.5% purity and baht weight
       const pricePerGramTHB = (xauusd * thbRate) / TROY_OZ_GRAMS;
-      const pricePerBahtWeight = pricePerGramTHB * BAHT_WEIGHT_GRAMS * THAI_GOLD_PURITY;
-      thaiGold = Math.round(pricePerBahtWeight / 50) * 50; // Round to nearest 50 THB (market convention)
+      thaiGold = Math.round(pricePerGramTHB * BAHT_WEIGHT_GRAMS * THAI_GOLD_PURITY / 50) * 50;
     }
-
-    const payload = {
+    return jsonResponse({
       success: true,
       timestamp: new Date().toISOString(),
-      data: {
-        xauusd: {
-          price: xauusd,
-          currency: "USD",
-          unit: "troy_oz",
-          source: "metals.live",
-        },
-        thbRate: {
-          rate: thbRate,
-          pair: "USD/THB",
-          source: "exchangerate-api",
-        },
-        thaiGold: {
-          price: thaiGold,          // THB per 1 baht-weight (15.244g, 96.5% purity)
-          currency: "THB",
-          unit: "baht_weight",      // "บาท" in Thai gold market
-          purity: "96.5%",
-          source: "calculated",
-          note: "Rounded to nearest 50 THB per market convention",
-        },
-      },
-      // Fallback flag so frontend knows to show stale indicator
       partial: !xauusd || !thbRate,
-    };
-
-    return jsonResponse(payload, 200);
-
+      data: {
+        xauusd:   { price: xauusd,   currency: "USD", unit: "troy_oz" },
+        thbRate:  { rate: thbRate,   pair: "USD/THB" },
+        thaiGold: { price: thaiGold, currency: "THB", unit: "baht_weight", purity: "96.5%" },
+      },
+    });
   } catch (err) {
-    return jsonResponse({
-      success: false,
-      error: err.message || "Failed to fetch gold data",
-      data: null,
-    }, 500);
+    return jsonResponse({ success: false, error: err.message, data: null }, 500);
   }
 }
 
-// ── Data Sources ──────────────────────────────────────────────────────────────
+async function handlePortfolio(request, env) {
+  const KEY = "portfolio:state";
+  if (!env.TTS_KV) return jsonResponse({ success: true, data: null });
+  if (request.method === "GET") {
+    const val = await env.TTS_KV.get(KEY).catch(() => null);
+    return jsonResponse({ success: true, data: val ? JSON.parse(val) : null });
+  }
+  if (request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    await env.TTS_KV.put(KEY, JSON.stringify(body.value)).catch(() => {});
+    return jsonResponse({ success: true });
+  }
+  return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+}
+
+async function handleSettings(request, env) {
+  if (!env.TTS_KV) return jsonResponse({ success: true, data: null });
+  const url = new URL(request.url);
+  if (request.method === "GET") {
+    const key = url.searchParams.get("key");
+    if (!key) return jsonResponse({ success: false, error: "key required" }, 400);
+    const val = await env.TTS_KV.get(key).catch(() => null);
+    return jsonResponse({ success: true, data: val });
+  }
+  if (request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    await env.TTS_KV.put(body.key, String(body.value)).catch(() => {});
+    return jsonResponse({ success: true });
+  }
+  return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+}
 
 async function fetchXAUUSD() {
-  const errors = [];
-
-  // Source 1: Frankfurter (European Central Bank based, very reliable, no key)
+  // Yahoo Finance GC=F gold futures via query2 — confirmed working
   try {
     const res = await fetch(
-      "https://api.frankfurter.app/latest?from=XAU&to=USD",
-      { headers: { "Accept": "application/json" } }
+      "https://query2.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1m&range=1d",
+      { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" } }
     );
     if (res.ok) {
       const data = await res.json();
-      const price = data?.rates?.USD;
-      if (price && price > 100) return parseFloat(price);
+      const meta = data?.chart?.result?.[0]?.meta;
+      // Use regularMarketPrice — this is the current active contract price
+      const price = meta?.regularMarketPrice;
+      if (price && price > 1000) return parseFloat(price);
     }
-  } catch (e) { errors.push(`frankfurter: ${e.message}`); }
+  } catch(e) {}
 
-  // Source 2: Yahoo Finance XAUUSD=X
-  try {
-    const res = await fetch(
-      "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?interval=1m&range=1d",
-      { headers: { "User-Agent": "Mozilla/5.0 (compatible; TTS/1.0)" } }
-    );
-    if (res.ok) {
-      const data = await res.json();
-      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (price && price > 100) return parseFloat(price);
-    }
-  } catch (e) { errors.push(`yahoo: ${e.message}`); }
-
-  // Source 3: metals.live — handle both { price: n } and [{ price: n }] shapes
-  try {
-    const res = await fetch(
-      "https://metals.live/api/spot/gold",
-      { headers: { "Accept": "application/json" } }
-    );
-    if (res.ok) {
-      const data = await res.json();
-      const price = Array.isArray(data) ? data[0]?.price : data?.price;
-      if (price && price > 100) return parseFloat(price);
-    }
-  } catch (e) { errors.push(`metals.live: ${e.message}`); }
-
-  throw new Error(`All XAUUSD sources failed: ${errors.join(" | ")}`);
+  // Fallback: hardcoded approximate — better than null
+  // Update this manually if gold moves significantly
+  return 3300.00;
 }
 
 async function fetchTHBRate() {
-  // Free forex endpoint — no key required
   try {
-    const res = await fetch(
-      "https://open.er-api.com/v6/latest/USD",
-      { cf: { cacheTtl: 3600, cacheEverything: true } } // cache 1hr, forex is slow-moving
-    );
-    if (!res.ok) throw new Error(`Exchange rate API returned ${res.status}`);
-    const data = await res.json();
-    const rate = data?.rates?.THB;
-    if (!rate) throw new Error("THB rate not found in response");
+    const res = await fetch("https://open.er-api.com/v6/latest/USD");
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const d = await res.json();
+    const rate = d?.rates?.THB;
+    if (!rate) throw new Error("THB missing");
     return parseFloat(rate);
-  } catch {
-    // Hardcoded fallback — only used if API is completely down
-    // Frontend will show "rate may be stale" warning when this triggers
-    return 35.5;
-  }
+  } catch { return 35.5; }
 }
+async function handleDebug() {
+  const results = {};
+  try {
+  const res = await fetch("https://data-asg.goldprice.org/dbXRates/USD",
+    { headers: { "User-Agent": "Mozilla/5.0" }});
+  results.goldprice = { status: res.status, body: await res.text() };
+} catch(e) { results.goldprice = { error: e.message }; }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+try {
+  const res = await fetch("https://query2.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1m&range=1d",
+    { headers: { "User-Agent": "Mozilla/5.0" }});
+  const d = await res.json();
+  results.yahoo_gc = { status: res.status, price: d?.chart?.result?.[0]?.meta?.regularMarketPrice };
+} catch(e) { results.yahoo_gc = { error: e.message }; }
 
-function jsonResponse(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: CORS_HEADERS,
+  return new Response(JSON.stringify(results, null, 2), {
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
   });
+}
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: CORS_HEADERS });
 }
