@@ -177,7 +177,8 @@ export function calcPortfolioSummary(portfolio, priceMap = {}) {
     positions:       Array.isArray(portfolio.positions)    ? portfolio.positions    : [],
     closedTrades:    Array.isArray(portfolio.closedTrades) ? portfolio.closedTrades : [],
     startingBalance: portfolio.startingBalance || portfolio.balance || 1000000,
-    balance:         portfolio.balance || 0,
+    // Use startingBalance as fallback — never let balance be 0 on a fresh load
+    balance:         portfolio.balance ?? portfolio.startingBalance ?? 1000000,
   };
   const updated = updatePositionPrices(safe, priceMap);
 
