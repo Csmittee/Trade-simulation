@@ -2,10 +2,18 @@
  * ChartPanel.jsx
  * Candlestick + Line chart with MA5/MA20 overlay.
  *
- * Candlestick approach: pure SVG overlay div positioned absolutely
- * over the Recharts container. We read the chart's rendered pixel
- * dimensions via ResizeObserver and compute candle positions manually.
- * No dependency on Recharts internals — works with any Recharts 2.x version.
+ * Timeframe fix (Phase 2): clicking 1D/1W/1M now calls onTimeframeChange(tf)
+ * so the parent injector can re-fetch historical data with the correct
+ * range/interval from the Worker. Chart shows a loading spinner while fetching.
+ *
+ * Props:
+ *   data              — OHLC candle array from injector
+ *   symbol            — e.g. "XAUUSD", "PTT.BK"
+ *   market            — "gold" | "set"
+ *   timeframe         — "1D" | "1W" | "1M" (controlled by parent)
+ *   historyLoading    — true while injector is fetching new timeframe data
+ *   onTimeframeChange — (tf: "1D"|"1W"|"1M") => void
+ *   onIntelRequest    — (symbol, date) => Promise<intel>
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -13,15 +21,19 @@ import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip as RechartsTooltip, ResponsiveContainer,
 } from "recharts";
-import Tooltip, { TooltipIcon } from "./Tooltip.jsx";
+import Tooltip from "./Tooltip.jsx";
 import config from "../../config.js";
+
+const CHART_MARGIN = { top: 8, right: 16, left: 8, bottom: 8 };
+const Y_AXIS_WIDTH = 72;
+const CHART_HEIGHT = 320;
 
 // ── Moving Average ────────────────────────────────────────────────────────────
 function calcMA(data, period) {
   return data.map((d, i) => {
     if (i < period - 1) return { ...d, [`ma${period}`]: null };
     const slice = data.slice(i - period + 1, i + 1);
-    const avg = slice.reduce((s, x) => s + x.close, 0) / period;
+    const avg   = slice.reduce((s, x) => s + x.close, 0) / period;
     return { ...d, [`ma${period}`]: parseFloat(avg.toFixed(2)) };
   });
 }
@@ -32,22 +44,14 @@ function enrichData(raw) {
 }
 
 // ── Candlestick SVG Overlay ───────────────────────────────────────────────────
-// Absolutely positioned SVG sitting on top of the Recharts chart div.
-// Must use the same margin + Y-axis width as the ComposedChart so coordinates align.
-const CHART_MARGIN = { top: 8, right: 16, left: 8, bottom: 8 };
-const Y_AXIS_WIDTH = 72;
-const CHART_HEIGHT = 320;
-
 function CandlestickOverlay({ data, containerWidth }) {
   if (!data?.length || !containerWidth) return null;
 
-  // Drawable pixel area (must match Recharts chart margins exactly)
-  const drawW  = containerWidth - CHART_MARGIN.left - CHART_MARGIN.right - Y_AXIS_WIDTH;
-  const drawH  = CHART_HEIGHT   - CHART_MARGIN.top  - CHART_MARGIN.bottom;
-  const origX  = CHART_MARGIN.left + Y_AXIS_WIDTH;
-  const origY  = CHART_MARGIN.top;
+  const drawW = containerWidth - CHART_MARGIN.left - CHART_MARGIN.right - Y_AXIS_WIDTH;
+  const drawH = CHART_HEIGHT  - CHART_MARGIN.top  - CHART_MARGIN.bottom;
+  const origX = CHART_MARGIN.left + Y_AXIS_WIDTH;
+  const origY = CHART_MARGIN.top;
 
-  // Price range with padding — must match yDomain used in ComposedChart
   const prices = data.flatMap(d => [d.high, d.low].filter(Boolean));
   if (!prices.length) return null;
   const minP = Math.min(...prices);
@@ -56,42 +60,26 @@ function CandlestickOverlay({ data, containerWidth }) {
   const yMin = minP - pad;
   const yMax = maxP + pad;
 
-  const toY = price => origY + drawH - ((price - yMin) / (yMax - yMin)) * drawH;
-
-  const slotW  = drawW / data.length;
-  const bodyW  = Math.max(2, Math.floor(slotW * 0.55));
+  const toY   = price => origY + drawH - ((price - yMin) / (yMax - yMin)) * drawH;
+  const slotW = drawW / data.length;
+  const bodyW = Math.max(2, Math.floor(slotW * 0.55));
 
   return (
-    <svg
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: containerWidth,
-        height: CHART_HEIGHT,
-        pointerEvents: "none",
-      }}
-    >
+    <svg style={{ position:"absolute", top:0, left:0, width:containerWidth, height:CHART_HEIGHT, pointerEvents:"none" }}>
       {data.map((d, i) => {
         if (d.open == null || d.close == null || d.high == null || d.low == null) return null;
-
-        const isUp  = d.close >= d.open;
-        const color = isUp ? "#22c55e" : "#ef4444";
-        const xC    = origX + i * slotW + slotW / 2;
-
+        const isUp       = d.close >= d.open;
+        const color      = isUp ? "#22c55e" : "#ef4444";
+        const xC         = origX + i * slotW + slotW / 2;
         const yHigh      = toY(d.high);
         const yLow       = toY(d.low);
         const bodyTop    = Math.min(toY(d.open), toY(d.close));
         const bodyBottom = Math.max(toY(d.open), toY(d.close));
         const bodyH      = Math.max(2, bodyBottom - bodyTop);
-
         return (
           <g key={i}>
-            {/* Upper wick: high → body top */}
             <line x1={xC} y1={yHigh} x2={xC} y2={bodyTop} stroke={color} strokeWidth={1.5} />
-            {/* Body */}
-            <rect x={xC - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} fill={color} opacity={0.85} rx={1} />
-            {/* Lower wick: body bottom → low */}
+            <rect x={xC - bodyW/2} y={bodyTop} width={bodyW} height={bodyH} fill={color} opacity={0.85} rx={1} />
             <line x1={xC} y1={bodyBottom} x2={xC} y2={yLow} stroke={color} strokeWidth={1.5} />
           </g>
         );
@@ -111,12 +99,10 @@ function PriceTooltip({ active, payload, label }) {
     <div className="price-tooltip">
       <div className="price-tooltip-time">{label}</div>
       <div className="price-tooltip-row">O <span>{d.open?.toLocaleString()}</span></div>
-      <div className="price-tooltip-row">H <span style={{ color:"#22c55e" }}>{d.high?.toLocaleString()}</span></div>
-      <div className="price-tooltip-row">L <span style={{ color:"#ef4444" }}>{d.low?.toLocaleString()}</span></div>
+      <div className="price-tooltip-row">H <span style={{color:"#22c55e"}}>{d.high?.toLocaleString()}</span></div>
+      <div className="price-tooltip-row">L <span style={{color:"#ef4444"}}>{d.low?.toLocaleString()}</span></div>
       <div className={`price-tooltip-row ${isUp?"up":"down"}`}>C <span>{d.close?.toLocaleString()}</span></div>
-      {change !== null && (
-        <div className={`price-tooltip-row ${isUp?"up":"down"}`}>% <span>{isUp?"+":""}{change}%</span></div>
-      )}
+      {change !== null && <div className={`price-tooltip-row ${isUp?"up":"down"}`}>% <span>{isUp?"+":""}{change}%</span></div>}
       {d.ma5  && <div className="price-tooltip-row ma5">MA5 <span>{d.ma5?.toLocaleString()}</span></div>}
       {d.ma20 && <div className="price-tooltip-row ma20">MA20 <span>{d.ma20?.toLocaleString()}</span></div>}
     </div>
@@ -128,43 +114,43 @@ function IntelBubble({ intel, position }) {
   if (!intel) return null;
   const color = { bullish:"#22c55e", bearish:"#ef4444", neutral:"#f59e0b" }[intel.sentiment] || "#888";
   return (
-    <div className="intel-bubble" style={{ left: position.x, top: position.y }}>
+    <div className="intel-bubble" style={{ left:position.x, top:position.y }}>
       <div className="intel-header">
         <span className="intel-label">⚡ INSIDER INTEL</span>
-        <span className="intel-sentiment" style={{ color }}>{intel.sentiment?.toUpperCase()}</span>
+        <span className="intel-sentiment" style={{color}}>{intel.sentiment?.toUpperCase()}</span>
         <span className="intel-confidence">{intel.confidence} confidence</span>
       </div>
-      <ul className="intel-factors">
-        {intel.factors?.map((f, i) => <li key={i}>{f}</li>)}
-      </ul>
+      <ul className="intel-factors">{intel.factors?.map((f,i) => <li key={i}>{f}</li>)}</ul>
       {intel.cached && <div className="intel-cached-note">📦 Cached — last updated today</div>}
     </div>
   );
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function ChartPanel({ data = [], symbol, market, onIntelRequest }) {
-  const [chartType, setChartType]       = useState("candlestick");
-  const [timeframe, setTimeframe]       = useState("1D");
-  const [showMA5, setShowMA5]           = useState(true);
-  const [showMA20, setShowMA20]         = useState(true);
-  const [intel, setIntel]               = useState(null);
-  const [intelPos, setIntelPos]         = useState({ x:0, y:0 });
-  const [intelLoading, setIntelLoading] = useState(false);
+export default function ChartPanel({
+  data = [],
+  symbol,
+  market,
+  timeframe,           // controlled by parent
+  historyLoading,      // true while injector re-fetches for new timeframe
+  onTimeframeChange,   // (tf) => void — parent re-fetches when this fires
+  onIntelRequest,
+}) {
+  const [chartType, setChartType]           = useState("candlestick");
+  const [showMA5, setShowMA5]               = useState(true);
+  const [showMA20, setShowMA20]             = useState(true);
+  const [intel, setIntel]                   = useState(null);
+  const [intelPos, setIntelPos]             = useState({ x:0, y:0 });
+  const [intelLoading, setIntelLoading]     = useState(false);
   const [containerWidth, setContainerWidth] = useState(0);
 
   const hoverTimer   = useRef(null);
   const intelCache   = useRef({});
   const containerRef = useRef(null);
 
-  const enriched     = enrichData(data);
-  const filteredData = timeframe === "1D"
-    ? enriched.slice(-78)
-    : timeframe === "1W"
-      ? enriched.slice(-390)
-      : enriched;
+  const enriched = enrichData(data);
 
-  // Measure container width for overlay alignment
+  // Measure container for SVG overlay
   useEffect(() => {
     if (!containerRef.current) return;
     const ro = new ResizeObserver(entries => {
@@ -174,16 +160,19 @@ export default function ChartPanel({ data = [], symbol, market, onIntelRequest }
     return () => ro.disconnect();
   }, []);
 
-  // Y domain — MUST match overlay price range calculation
+  // Y domain — must match overlay calculation
   const yDomain = (() => {
-    if (!filteredData.length) return ["auto", "auto"];
-    const prices = filteredData.flatMap(d => [d.high, d.low].filter(Boolean));
+    if (!enriched.length) return ["auto", "auto"];
+    const prices = enriched.flatMap(d => [d.high, d.low].filter(Boolean));
     if (!prices.length) return ["auto", "auto"];
     const minP = Math.min(...prices);
     const maxP = Math.max(...prices);
     const pad  = (maxP - minP) * 0.1 || maxP * 0.01;
     return [Math.floor(minP - pad), Math.ceil(maxP + pad)];
   })();
+
+  // Clear intel cache when symbol or timeframe changes
+  useEffect(() => { intelCache.current = {}; }, [symbol, timeframe]);
 
   const handleChartMouseMove = useCallback((chartData, event) => {
     if (!chartData?.activePayload?.[0]) return;
@@ -214,6 +203,13 @@ export default function ChartPanel({ data = [], symbol, market, onIntelRequest }
     setIntel(null);
   }, []);
 
+  const handleTimeframe = (tf) => {
+    if (tf === timeframe) return;
+    onTimeframeChange(tf);
+  };
+
+  const isLoading = historyLoading || (data.length === 0);
+
   return (
     <div className="chart-panel">
       {/* Controls */}
@@ -227,9 +223,15 @@ export default function ChartPanel({ data = [], symbol, market, onIntelRequest }
           </Tooltip>
         </div>
         <div className="timeframe-toggle">
-          {["1D","1W","1M"].map(tf=>(
+          {["1D","1W","1M"].map(tf => (
             <Tooltip key={tf} id={`tooltip-chart-timeframe-${tf}`}>
-              <button className={`ctrl-btn ${timeframe===tf?"active":""}`} onClick={()=>setTimeframe(tf)}>{tf}</button>
+              <button
+                className={`ctrl-btn ${timeframe===tf?"active":""} ${historyLoading&&timeframe===tf?"loading":""}`}
+                onClick={() => handleTimeframe(tf)}
+                disabled={historyLoading}
+              >
+                {historyLoading && timeframe===tf ? "..." : tf}
+              </button>
             </Tooltip>
           ))}
         </div>
@@ -246,31 +248,24 @@ export default function ChartPanel({ data = [], symbol, market, onIntelRequest }
         </div>
       </div>
 
-      {/* Chart + SVG overlay wrapper */}
-      <div className="chart-container" ref={containerRef} style={{ position:"relative", minHeight: CHART_HEIGHT }}>
-        {filteredData.length === 0 ? (
+      {/* Chart */}
+      <div className="chart-container" ref={containerRef} style={{ position:"relative", minHeight:CHART_HEIGHT }}>
+        {isLoading ? (
           <div className="chart-loading">
-            {data.length === 0 ? "Loading price history..." : "No data for this timeframe"}
+            {historyLoading ? `Loading ${timeframe} data...` : "Loading price history..."}
           </div>
         ) : (
           <>
             <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-              <ComposedChart
-                data={filteredData}
-                margin={CHART_MARGIN}
-                onMouseMove={handleChartMouseMove}
-                onMouseLeave={handleChartMouseLeave}
-              >
+              <ComposedChart data={enriched} margin={CHART_MARGIN}
+                onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis dataKey="time" tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
                   axisLine={{stroke:"rgba(255,255,255,0.1)"}} interval="preserveStartEnd" />
                 <YAxis domain={yDomain} tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
                   axisLine={false} tickFormatter={v=>v.toLocaleString()} width={Y_AXIS_WIDTH} />
                 <RechartsTooltip content={<PriceTooltip />} />
-
-                {/* Transparent line — keeps Recharts rendering MA lines on correct scale */}
                 <Line dataKey="close" stroke="transparent" dot={false} isAnimationActive={false} />
-
                 {chartType==="line" && (
                   <Line type="monotone" dataKey="close" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
                 )}
@@ -282,10 +277,8 @@ export default function ChartPanel({ data = [], symbol, market, onIntelRequest }
                 )}
               </ComposedChart>
             </ResponsiveContainer>
-
-            {/* Candlestick SVG overlay — pointer-events:none so Recharts tooltip still works */}
             {chartType==="candlestick" && containerWidth>0 && (
-              <CandlestickOverlay data={filteredData} containerWidth={containerWidth} />
+              <CandlestickOverlay data={enriched} containerWidth={containerWidth} />
             )}
           </>
         )}
@@ -300,7 +293,7 @@ export default function ChartPanel({ data = [], symbol, market, onIntelRequest }
         <span className="legend-item up">■ Up</span>
         <span className="legend-item down">■ Down</span>
         <span className="legend-item" style={{color:"#4b5563",marginLeft:"auto"}}>
-          {filteredData.length} candles
+          {enriched.length} candles
         </span>
       </div>
     </div>
