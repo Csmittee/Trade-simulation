@@ -24,7 +24,7 @@ const WATCHLIST    = config.data.set.watchlistDefault;
 const TF_PARAMS = {
   "1D": { range: "1d",  interval: "5m"  },
   "1W": { range: "5d",  interval: "15m" },
-  "1M": { range: "1mo", interval: "1h"  },
+  "1M": { range: "1mo", interval: "1d"  }, // daily candles for 1M — Yahoo 1h unreliable for SET
 };
 
 export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHours, timeframe }) {
