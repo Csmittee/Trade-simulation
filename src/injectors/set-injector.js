@@ -3,13 +3,13 @@
  * All SET/MAI market data fetching and trade wiring.
  * Used by SetMarket.jsx — isolated from gold logic (L006).
  *
- * Phase 2 scope:
- * - Watchlist of 8 default stocks, user can switch between them
- * - Live ticks only (no historical candles for SET in Phase 2)
- * - 15-min delayed data via Yahoo Finance Worker proxy (L002)
- * - Same buy/sell/SL/TP mechanics as gold
- * - SET commission: 0.157% + VAT + 0.1% transfer fee (baked into portfolio-engine)
- * - Minimum lot size: 100 shares
+ * Timeframe fix (Phase 2):
+ * fetchHistory re-fetches with correct range/interval when timeframe changes.
+ * 1D → range=1d&interval=5m
+ * 1W → range=5d&interval=15m
+ * 1M → range=1mo&interval=1h
+ *
+ * ⚠️ SET data is 15-min delayed via Yahoo Finance free tier (L002).
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -17,29 +17,64 @@ import config from "../../config.js";
 import { executeBuy, executeSell, updatePositionPrices, isMarketOpen } from "../core/portfolio-engine.js";
 
 const WORKER_SET   = config.workers.base + config.workers.routes.set;
+const WORKER_HIST  = config.workers.base + "/api/history";
 const REFRESH_MS   = config.data.set.refreshIntervalMs;
 const WATCHLIST    = config.data.set.watchlistDefault;
 
-/**
- * useSetMarket — custom hook for all SET market state.
- * Returns everything SetMarket.jsx needs.
- *
- * @param {string}   activeSymbol  — currently selected stock e.g. "PTT.BK"
- * @param {object}   portfolio     — current portfolio state
- * @param {function} setPortfolio  — state setter from Dashboard
- * @param {boolean}  enforceHours  — from dashboard toggle
- */
-export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHours }) {
-  const [watchlistData, setWatchlistData] = useState({});   // { "PTT.BK": quote, ... }
-  const [priceHistory, setPriceHistory]   = useState([]);   // ticks for active symbol chart
-  const [loading, setLoading]             = useState(true);
-  const [error, setError]                 = useState(null);
-  const [lastUpdated, setLastUpdated]     = useState(null);
+const TF_PARAMS = {
+  "1D": { range: "1d",  interval: "5m"  },
+  "1W": { range: "5d",  interval: "15m" },
+  "1M": { range: "1mo", interval: "1h"  },
+};
+
+export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHours, timeframe }) {
+  const [watchlistData, setWatchlistData]   = useState({});
+  const [priceHistory, setPriceHistory]     = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [loading, setLoading]               = useState(true);
+  const [error, setError]                   = useState(null);
+  const [lastUpdated, setLastUpdated]       = useState(null);
 
   const intervalRef   = useRef(null);
-  const prevSymbolRef = useRef(null);
+  const prevSymbol    = useRef(null);
+  const prevTimeframe = useRef(null);
 
-  // ── Fetch all watchlist quotes (batch) ────────────────────────────────────
+  // ── Fetch historical OHLC for active symbol ──────────────────────────────────
+  // Called when symbol or timeframe changes.
+  const fetchHistory = useCallback(async (symbol, tf) => {
+    const { range, interval } = TF_PARAMS[tf] || TF_PARAMS["1D"];
+    setHistoryLoading(true);
+    try {
+      const encoded = encodeURIComponent(symbol);
+      const res = await fetch(
+        `${WORKER_HIST}?symbol=${encoded}&range=${range}&interval=${interval}&market=set`
+      );
+      if (!res.ok) throw new Error(`History returned ${res.status}`);
+      const json = await res.json();
+      if (!json.success || !json.data?.length) {
+        console.warn(`SET history empty for ${symbol} ${tf}`);
+        return;
+      }
+      setPriceHistory(json.data);
+    } catch (e) {
+      console.warn("SET history fetch failed:", e.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  // Re-fetch when symbol or timeframe changes
+  useEffect(() => {
+    const symbolChanged    = prevSymbol.current    !== activeSymbol;
+    const timeframeChanged = prevTimeframe.current !== timeframe;
+    if (!symbolChanged && !timeframeChanged) return;
+    prevSymbol.current    = activeSymbol;
+    prevTimeframe.current = timeframe;
+    setPriceHistory([]); // clear old data immediately so chart shows loading
+    fetchHistory(activeSymbol, timeframe);
+  }, [activeSymbol, timeframe, fetchHistory]);
+
+  // ── Fetch watchlist quotes (batch, every 60s) ────────────────────────────────
   const fetchWatchlist = useCallback(async () => {
     try {
       const symbolsParam = WATCHLIST.join(",");
@@ -47,75 +82,54 @@ export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHou
       if (!res.ok) throw new Error(`SET Worker returned ${res.status}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error || "SET Worker error");
-
       setWatchlistData(json.data || {});
       setLastUpdated(new Date());
       setError(null);
+
+      // In 1D mode — append latest tick from watchlist to chart
+      if (timeframe === "1D") {
+        const quote = json.data?.[activeSymbol];
+        if (quote?.ticks?.length) {
+          const latestTick = quote.ticks[quote.ticks.length - 1];
+          setPriceHistory(prev => {
+            if (!prev.length) return quote.ticks;
+            const last = prev[prev.length - 1];
+            if (last.time === latestTick.time) {
+              return [...prev.slice(0, -1), {
+                ...last,
+                high:   Math.max(last.high,  latestTick.close),
+                low:    Math.min(last.low,   latestTick.close),
+                close:  latestTick.close,
+                volume: latestTick.volume,
+              }];
+            }
+            return [...prev.slice(-389), latestTick];
+          });
+        }
+      }
     } catch (e) {
       setError(`SET data unavailable: ${e.message}`);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeSymbol, timeframe]);
 
-  // ── Update chart ticks when active symbol data arrives ────────────────────
-  useEffect(() => {
-    const quote = watchlistData[activeSymbol];
-    if (!quote?.ticks?.length) return;
-
-    // If symbol changed — reset history to fresh ticks from the new symbol
-    if (prevSymbolRef.current !== activeSymbol) {
-      setPriceHistory(quote.ticks);
-      prevSymbolRef.current = activeSymbol;
-      return;
-    }
-
-    // Same symbol — append latest tick if it's a new minute
-    const latestTick = quote.ticks[quote.ticks.length - 1];
-    if (!latestTick) return;
-
-    setPriceHistory(prev => {
-      if (!prev.length) return quote.ticks;
-
-      const last = prev[prev.length - 1];
-      if (last.time === latestTick.time) {
-        // Update last candle in place
-        return [
-          ...prev.slice(0, -1),
-          {
-            ...last,
-            high:   Math.max(last.high,  latestTick.close),
-            low:    Math.min(last.low,   latestTick.close),
-            close:  latestTick.close,
-            volume: latestTick.volume,
-          },
-        ];
-      }
-      // New minute — append, keep last 390
-      return [...prev.slice(-389), latestTick];
-    });
-  }, [watchlistData, activeSymbol]);
-
-  // Mount: fetch immediately then poll every 60s
+  // Mount: start watchlist polling
   useEffect(() => {
     fetchWatchlist();
     intervalRef.current = setInterval(fetchWatchlist, REFRESH_MS);
     return () => clearInterval(intervalRef.current);
   }, [fetchWatchlist]);
 
-  // Auto-check SL/TP on every watchlist update
+  // Auto SL/TP check
   useEffect(() => {
     if (!Object.keys(watchlistData).length) return;
-
-    // Build price map from all watchlist quotes
     const priceMap = {};
     Object.entries(watchlistData).forEach(([sym, q]) => {
       if (q?.price) priceMap[sym] = q.price;
     });
-
-    const updated  = updatePositionPrices(portfolio, priceMap);
-    const toClose  = updated.positions.filter(p => p.autoClose && p.market === "set");
-
+    const updated = updatePositionPrices(portfolio, priceMap);
+    const toClose = updated.positions.filter(p => p.autoClose && p.market === "set");
     if (toClose.length > 0) {
       let current = updated;
       toClose.forEach(pos => {
@@ -128,13 +142,9 @@ export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHou
     }
   }, [watchlistData]);
 
-  // ── Trade handlers ────────────────────────────────────────────────────────
+  // Trade handlers
   const handleBuy = useCallback((order) => {
-    const result = executeBuy(portfolio, {
-      ...order,
-      symbol: activeSymbol,
-      market: "set",
-    });
+    const result = executeBuy(portfolio, { ...order, symbol: activeSymbol, market: "set" });
     if (result.error) return { error: result.error };
     setPortfolio(result.portfolio);
     return { trade: result.trade, warning: result.warning };
@@ -148,19 +158,15 @@ export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHou
     return { trade: result.trade };
   }, [portfolio, activeSymbol, watchlistData]);
 
-  const marketOpen = isMarketOpen("set", enforceHours);
-
-  // Active symbol's current quote
-  const activeQuote = watchlistData[activeSymbol] || null;
-
   return {
     watchlistData,
-    activeQuote,
+    activeQuote:    watchlistData[activeSymbol] || null,
     priceHistory,
+    historyLoading,
     loading,
     error,
     lastUpdated,
-    marketOpen,
+    marketOpen:     isMarketOpen("set", enforceHours),
     handleBuy,
     handleSell,
   };
