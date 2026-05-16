@@ -30,10 +30,17 @@ const CHART_HEIGHT = 320;
 
 // ── Moving Average ────────────────────────────────────────────────────────────
 function calcMA(data, period) {
+  // Only compute MA over real candles — skip gap markers entirely
+  // otherwise MA drops to 0 across gaps causing dramatic vertical spikes
   return data.map((d, i) => {
-    if (i < period - 1) return { ...d, [`ma${period}`]: null };
-    const slice = data.slice(i - period + 1, i + 1);
-    const avg   = slice.reduce((s, x) => s + x.close, 0) / period;
+    if (d.isGap || d.close == null) return { ...d, [`ma${period}`]: null };
+    // Collect the last `period` real (non-gap) closes going backwards
+    const realCloses = [];
+    for (let j = i; j >= 0 && realCloses.length < period; j--) {
+      if (!data[j].isGap && data[j].close != null) realCloses.push(data[j].close);
+    }
+    if (realCloses.length < period) return { ...d, [`ma${period}`]: null };
+    const avg = realCloses.reduce((s, v) => s + v, 0) / period;
     return { ...d, [`ma${period}`]: parseFloat(avg.toFixed(2)) };
   });
 }
@@ -267,7 +274,7 @@ export default function ChartPanel({
                   tickLine={false}
                   axisLine={{stroke:"rgba(255,255,255,0.1)"}}
                   interval="preserveStartEnd"
-                  tickFormatter={v => v || ""}
+                  tickFormatter={v => (!v || String(v).startsWith("gap")) ? "" : v}
                 />
                 <YAxis domain={yDomain} tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
                   axisLine={false} tickFormatter={v=>v.toLocaleString()} width={Y_AXIS_WIDTH} />
