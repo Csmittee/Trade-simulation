@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import GoldMarket from "./GoldMarket.jsx";
+import SetMarket  from "./SetMarket.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { createPortfolio, resetPortfolio, calcPortfolioSummary, isMarketOpen } from "../core/portfolio-engine.js";
 import config from "../../config.js";
@@ -295,12 +296,12 @@ export default function Dashboard() {
         {TABS.map(({ key, label, icon }) => (
           <button
             key={key}
-            className={`tab-btn ${activeTab === key ? "active" : ""} ${key === "set" ? "coming-soon" : ""}`}
+            className={`tab-btn ${activeTab === key ? "active" : ""} ${key === "portfolio" ? "coming-soon" : ""}`}
             onClick={() => setActiveTab(key)}
           >
             <span>{icon}</span>
             <span>{label}</span>
-            {key === "set" && <span className="coming-tag">Phase 2</span>}
+            {key === "portfolio" && <span className="coming-tag">Phase 5</span>}
           </button>
         ))}
       </nav>
@@ -316,11 +317,12 @@ export default function Dashboard() {
           />
         )}
         {activeTab === "set" && (
-          <div className="coming-soon-page">
-            <div className="coming-icon">📈</div>
-            <h2>SET/MAI Market — Phase 2</h2>
-            <p>Thai stock market tab is coming in the next build phase. Gold market is fully functional now.</p>
-          </div>
+          <SetMarket
+            portfolio={portfolio}
+            setPortfolio={setPortfolio}
+            enforceHours={enforceHours}
+            onAIStrategy={handleAIStrategy}
+          />
         )}
         {activeTab === "portfolio" && (
           <div className="coming-soon-page">
