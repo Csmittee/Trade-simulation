@@ -89,12 +89,14 @@ export function useGoldMarket({ portfolio, setPortfolio, enforceHours, timeframe
       setLastUpdated(new Date());
       setError(null);
 
-      // Only append live ticks in 1D mode — other timeframes show historical candles
+      // Only append live ticks in 1D mode — other timeframes show static historical candles
       if (timeframe === "1D") {
         setPriceHistory(prev => {
           const livePrice = json.data.thaiGold.price;
+          const timeStr   = formatTime(new Date());
           const newPoint  = {
-            time:   formatTime(new Date()),
+            time:   timeStr,
+            label:  timeStr,   // 1D uses HH:MM as label (matches Worker format)
             open:   prev.length > 0 ? prev[prev.length - 1].close : livePrice,
             high:   livePrice,
             low:    livePrice,
@@ -110,7 +112,8 @@ export function useGoldMarket({ portfolio, setPortfolio, enforceHours, timeframe
               close: livePrice,
             }];
           }
-          return [...prev.slice(-389), newPoint];
+          // Cap at 78 candles — Worker also caps 1D to 78, keep in sync
+          return [...prev.slice(-77), newPoint];
         });
       }
     } catch (e) {

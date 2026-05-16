@@ -91,19 +91,21 @@ export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHou
         const quote = json.data?.[activeSymbol];
         if (quote?.ticks?.length) {
           const latestTick = quote.ticks[quote.ticks.length - 1];
+          // Ensure label field exists (SET ticks from watchlist use time as label for 1D)
+          const tickWithLabel = { ...latestTick, label: latestTick.label || latestTick.time };
           setPriceHistory(prev => {
-            if (!prev.length) return quote.ticks;
+            if (!prev.length) return quote.ticks.map(t => ({ ...t, label: t.label || t.time }));
             const last = prev[prev.length - 1];
-            if (last.time === latestTick.time) {
+            if (last.time === tickWithLabel.time) {
               return [...prev.slice(0, -1), {
                 ...last,
-                high:   Math.max(last.high,  latestTick.close),
-                low:    Math.min(last.low,   latestTick.close),
-                close:  latestTick.close,
-                volume: latestTick.volume,
+                high:   Math.max(last.high,  tickWithLabel.close),
+                low:    Math.min(last.low,   tickWithLabel.close),
+                close:  tickWithLabel.close,
+                volume: tickWithLabel.volume,
               }];
             }
-            return [...prev.slice(-389), latestTick];
+            return [...prev.slice(-77), tickWithLabel];
           });
         }
       }
