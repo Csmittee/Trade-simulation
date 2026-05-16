@@ -13,7 +13,8 @@ import { calcPortfolioSummary, calcHourlyPnL } from "../core/portfolio-engine.js
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
 
 export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAIStrategy }) {
-  const [activeSymbol, setActiveSymbol] = useState("THAI_GOLD_BAHT"); // or "XAUUSD"
+  const [activeSymbol, setActiveSymbol] = useState("THAI_GOLD_BAHT");
+  const [timeframe, setTimeframe]       = useState("1D");
 
   const {
     goldData,
@@ -22,14 +23,14 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
     error,
     partial,
     lastUpdated,
+    historyLoading,
     marketOpen,
     handleBuy,
     handleSell,
     fetchIntel,
-  } = useGoldMarket({ portfolio, setPortfolio, enforceHours });
+  } = useGoldMarket({ portfolio, setPortfolio, enforceHours, timeframe });
 
   const summary = calcPortfolioSummary(portfolio);
-  // Guard: arrays may be missing if portfolio loaded from old KV format
   const closedTrades  = Array.isArray(portfolio?.closedTrades) ? portfolio.closedTrades : [];
   const positions     = Array.isArray(portfolio?.positions)    ? portfolio.positions    : [];
   const hourlyPnL     = calcHourlyPnL(closedTrades.filter(t => t.market === "gold"));
@@ -106,6 +107,9 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
             data={priceHistory}
             symbol={activeSymbol}
             market="gold"
+            timeframe={timeframe}
+            historyLoading={historyLoading}
+            onTimeframeChange={setTimeframe}
             onIntelRequest={fetchIntel}
           />
 
