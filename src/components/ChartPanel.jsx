@@ -44,7 +44,7 @@ function enrichData(raw) {
 }
 
 // ── Candlestick SVG Overlay ───────────────────────────────────────────────────
-function CandlestickOverlay({ data, containerWidth }) {
+function CandlestickOverlay({ data, containerWidth, yDomain }) {
   if (!data?.length || !containerWidth) return null;
 
   const drawW = containerWidth - CHART_MARGIN.left - CHART_MARGIN.right - Y_AXIS_WIDTH;
@@ -52,13 +52,10 @@ function CandlestickOverlay({ data, containerWidth }) {
   const origX = CHART_MARGIN.left + Y_AXIS_WIDTH;
   const origY = CHART_MARGIN.top;
 
-  const prices = data.flatMap(d => [d.high, d.low].filter(Boolean));
-  if (!prices.length) return null;
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
-  const pad  = (maxP - minP) * 0.1 || maxP * 0.01;
-  const yMin = minP - pad;
-  const yMax = maxP + pad;
+  // Use yDomain from parent (same as Recharts YAxis) so overlay aligns perfectly
+  const yMin = yDomain?.[0] ?? Math.min(...data.flatMap(d => [d.low].filter(Boolean)));
+  const yMax = yDomain?.[1] ?? Math.max(...data.flatMap(d => [d.high].filter(Boolean)));
+  if (yMin === yMax) return null;
 
   const toY   = price => origY + drawH - ((price - yMin) / (yMax - yMin)) * drawH;
   const slotW = drawW / data.length;
@@ -67,7 +64,8 @@ function CandlestickOverlay({ data, containerWidth }) {
   return (
     <svg style={{ position:"absolute", top:0, left:0, width:containerWidth, height:CHART_HEIGHT, pointerEvents:"none" }}>
       {data.map((d, i) => {
-        if (d.open == null || d.close == null || d.high == null || d.low == null) return null;
+        // Skip gap markers — they render as blank space naturally
+        if (d.isGap || d.open == null || d.close == null || d.high == null || d.low == null) return null;
         const isUp       = d.close >= d.open;
         const color      = isUp ? "#22c55e" : "#ef4444";
         const xC         = origX + i * slotW + slotW / 2;
@@ -161,9 +159,12 @@ export default function ChartPanel({
   }, []);
 
   // Y domain — must match overlay calculation
+  // Filter out gap markers for price calculations
+  const realCandles = enriched.filter(d => !d.isGap && d.close != null);
+
   const yDomain = (() => {
-    if (!enriched.length) return ["auto", "auto"];
-    const prices = enriched.flatMap(d => [d.high, d.low].filter(Boolean));
+    if (!realCandles.length) return ["auto", "auto"];
+    const prices = realCandles.flatMap(d => [d.high, d.low].filter(Boolean));
     if (!prices.length) return ["auto", "auto"];
     const minP = Math.min(...prices);
     const maxP = Math.max(...prices);
@@ -260,8 +261,14 @@ export default function ChartPanel({
               <ComposedChart data={enriched} margin={CHART_MARGIN}
                 onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="time" tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
-                  axisLine={{stroke:"rgba(255,255,255,0.1)"}} interval="preserveStartEnd" />
+                <XAxis
+                  dataKey="label"
+                  tick={{fill:"#9ca3af",fontSize:10}}
+                  tickLine={false}
+                  axisLine={{stroke:"rgba(255,255,255,0.1)"}}
+                  interval="preserveStartEnd"
+                  tickFormatter={v => v || ""}
+                />
                 <YAxis domain={yDomain} tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
                   axisLine={false} tickFormatter={v=>v.toLocaleString()} width={Y_AXIS_WIDTH} />
                 <RechartsTooltip content={<PriceTooltip />} />
@@ -278,7 +285,7 @@ export default function ChartPanel({
               </ComposedChart>
             </ResponsiveContainer>
             {chartType==="candlestick" && containerWidth>0 && (
-              <CandlestickOverlay data={enriched} containerWidth={containerWidth} />
+              <CandlestickOverlay data={enriched} containerWidth={containerWidth} yDomain={yDomain} />
             )}
           </>
         )}
@@ -293,7 +300,7 @@ export default function ChartPanel({
         <span className="legend-item up">■ Up</span>
         <span className="legend-item down">■ Down</span>
         <span className="legend-item" style={{color:"#4b5563",marginLeft:"auto"}}>
-          {enriched.length} candles
+          {realCandles.length} candles
         </span>
       </div>
     </div>
