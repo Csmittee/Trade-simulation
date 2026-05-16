@@ -279,15 +279,15 @@ export default function ChartPanel({
                 <YAxis domain={yDomain} tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
                   axisLine={false} tickFormatter={v=>v.toLocaleString()} width={Y_AXIS_WIDTH} />
                 <RechartsTooltip content={<PriceTooltip />} />
-                <Line dataKey="close" stroke="transparent" dot={false} isAnimationActive={false} />
+                <Line dataKey="close" stroke="transparent" dot={false} isAnimationActive={false} connectNulls={false} />
                 {chartType==="line" && (
-                  <Line type="monotone" dataKey="close" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="close" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
                 )}
                 {showMA5 && (
-                  <Line type="monotone" dataKey="ma5" stroke="#60a5fa" strokeWidth={1.5} dot={false} strokeDasharray="4 2" isAnimationActive={false} />
+                  <Line type="monotone" dataKey="ma5" stroke="#60a5fa" strokeWidth={1.5} dot={false} strokeDasharray="4 2" isAnimationActive={false} connectNulls={false} />
                 )}
                 {showMA20 && (
-                  <Line type="monotone" dataKey="ma20" stroke="#f97316" strokeWidth={1.5} dot={false} strokeDasharray="6 3" isAnimationActive={false} />
+                  <Line type="monotone" dataKey="ma20" stroke="#f97316" strokeWidth={1.5} dot={false} strokeDasharray="6 3" isAnimationActive={false} connectNulls={false} />
                 )}
               </ComposedChart>
             </ResponsiveContainer>
