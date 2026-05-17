@@ -782,6 +782,43 @@ a { color: var(--gold); }
 
 /* Pending Trade Confirmation */
 .trade-confirm { border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; border: 1px solid; animation: fadeIn 0.2s ease; }
+/* Large trade card — yellow-orange */
+.confirm-large {
+  background: rgba(245,158,11,0.1);
+  border-color: var(--gold);
+}
+
+/* Oversized trade card — orange-red */
+.confirm-oversized {
+  background: rgba(249,115,22,0.12);
+  border-color: var(--orange);
+}
+
+/* Tier warning label inside confirm card */
+.confirm-tier-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+  color: var(--orange); margin-bottom: 4px;
+}
+
+/* Countdown bar */
+.confirm-countdown {
+  position: relative; height: 18px;
+  background: var(--bg-raised); border-radius: var(--radius-sm);
+  overflow: hidden; margin: 2px 0;
+}
+.confirm-countdown-bar {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--gold); opacity: 0.4;
+  transition: width 1s linear;
+}
+.confirm-countdown-text {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--text-muted);
+}
+
+
+
 .confirm-buy  { background: var(--green-dim); border-color: var(--green); }
 .confirm-sell { background: var(--red-dim);   border-color: var(--red); }
 .confirm-title { font-size: 12px; font-weight: 700; color: var(--text-primary); }
