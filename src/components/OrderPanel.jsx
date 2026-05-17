@@ -1,8 +1,7 @@
 /**
  * OrderPanel.jsx
- * Phase 3 patch — Preset tab removed. Two tabs only:
- *   1. Manual — price/qty/SL/TP (auto-strategy autopilot lives in StrategyPanel below)
- *   2. AI Assist — Phase 4 placeholder
+ * Phase 4 patch: `mode` (manual|ai) lifted to parent so StrategyPanel
+ * can be hidden when AI tab is active. Parent passes orderMode + onOrderModeChange.
  */
 
 import { useState, useEffect } from "react";
@@ -12,8 +11,9 @@ import { suggestPositionSize, getRiskLabel, calcPortfolioSummary } from "../core
 export default function OrderPanel({
   market, currentPrice, portfolio,
   onBuy, onSell, marketOpen, enforceHours, onAIStrategy,
+  // Phase 4: mode lifted to parent
+  orderMode, onOrderModeChange,
 }) {
-  const [mode, setMode]             = useState("manual");
   const [side, setSide]             = useState("buy");
   const [qty, setQty]               = useState("");
   const [price, setPrice]           = useState("");
@@ -52,7 +52,6 @@ export default function OrderPanel({
     setError(null); setWarning(null);
     if (!qty || !price) { setError("Please enter quantity and price."); return; }
     if (!canTrade) { setError(closedHint); return; }
-
     if (side === "buy") {
       const result = onBuy({ symbol: market === "gold" ? "THAI_GOLD_BAHT" : "SELECTED_STOCK", market, qty: parseFloat(qty), price: parseFloat(price), stopLoss: parseFloat(stopLoss) || null, takeProfit: parseFloat(takeProfit) || null, strategy: "manual", simMode });
       if (result?.error) { setError(`Order rejected: ${result.error}`); return; }
@@ -76,6 +75,7 @@ export default function OrderPanel({
 
   const unitLabel = market === "gold" ? "baht-weight" : "shares";
   const minUnit   = market === "gold" ? 1 : 100;
+  const mode      = orderMode || "manual";
 
   return (
     <div className="order-panel">
@@ -83,14 +83,18 @@ export default function OrderPanel({
       {/* ── Tabs: Manual | AI Assist ── */}
       <div className="mode-selector">
         <Tooltip id="tooltip-strategy-manual">
-          <button className={`mode-btn ${mode === "manual" ? "active" : ""}`} onClick={() => setMode("manual")}>Manual</button>
+          <button className={`mode-btn ${mode === "manual" ? "active" : ""}`} onClick={() => onOrderModeChange("manual")}>
+            Manual
+          </button>
         </Tooltip>
         <Tooltip id="tooltip-strategy-ai">
-          <button className={`mode-btn ${mode === "ai" ? "active" : ""}`} onClick={() => setMode("ai")}>✦ AI Assist</button>
+          <button className={`mode-btn ${mode === "ai" ? "active" : ""}`} onClick={() => onOrderModeChange("ai")}>
+            ✦ AI Assist
+          </button>
         </Tooltip>
       </div>
 
-      {/* ── Buy / Sell ── */}
+      {/* ── Buy / Sell (always visible) ── */}
       <div className="side-toggle">
         <Tooltip id="tooltip-order-buy">
           <button className={`side-btn buy ${side === "buy" ? "active" : ""}`} onClick={() => setSide("buy")}>▲ BUY</button>
@@ -109,10 +113,18 @@ export default function OrderPanel({
             suggest entry/exit levels, and optionally execute the trade for you.
           </p>
           <label className="field-label">Your Market Thesis</label>
-          <textarea className="field-input ai-prompt" rows={3}
+          <textarea
+            className="field-input ai-prompt"
+            rows={3}
             placeholder="e.g. Gold looks strong — USD weakening and Fed pause expected. What's your read?"
-            value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} />
-          <button className="ai-submit-btn" onClick={handleAIAssist} disabled={aiLoading || !aiPrompt.trim()}>
+            value={aiPrompt}
+            onChange={e => setAiPrompt(e.target.value)}
+          />
+          <button
+            className="ai-submit-btn"
+            onClick={handleAIAssist}
+            disabled={aiLoading || !aiPrompt.trim()}
+          >
             {aiLoading ? "Analysing..." : "✦ Get AI Recommendation"}
           </button>
           {aiResponse && (
@@ -124,7 +136,12 @@ export default function OrderPanel({
                 {aiResponse.suggestedStop  && <span>Stop: ฿{aiResponse.suggestedStop}</span>}
                 {aiResponse.suggestedTP    && <span>Target: ฿{aiResponse.suggestedTP}</span>}
               </div>
-              <button className="ai-apply-btn" onClick={() => { setPrice(aiResponse.suggestedEntry || price); setStopLoss(aiResponse.suggestedStop || ""); setTakeProfit(aiResponse.suggestedTP || ""); setMode("manual"); }}>
+              <button className="ai-apply-btn" onClick={() => {
+                setPrice(aiResponse.suggestedEntry || price);
+                setStopLoss(aiResponse.suggestedStop || "");
+                setTakeProfit(aiResponse.suggestedTP || "");
+                onOrderModeChange("manual");
+              }}>
                 Apply to Order →
               </button>
             </div>

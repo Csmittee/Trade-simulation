@@ -1,19 +1,7 @@
 /**
  * ChartPanel.jsx
- * Candlestick + Line chart with MA5/MA20 overlay.
- *
- * Timeframe fix (Phase 2): clicking 1D/1W/1M now calls onTimeframeChange(tf)
- * so the parent injector can re-fetch historical data with the correct
- * range/interval from the Worker. Chart shows a loading spinner while fetching.
- *
- * Props:
- *   data              — OHLC candle array from injector
- *   symbol            — e.g. "XAUUSD", "PTT.BK"
- *   market            — "gold" | "set"
- *   timeframe         — "1D" | "1W" | "1M" (controlled by parent)
- *   historyLoading    — true while injector is fetching new timeframe data
- *   onTimeframeChange — (tf: "1D"|"1W"|"1M") => void
- *   onIntelRequest    — (symbol, date) => Promise<intel>
+ * Phase 4 patch: hover mode toggle — "Data" shows OHLC tooltip, "Intel" shows AI bubble.
+ * They no longer fight each other.
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -30,11 +18,8 @@ const CHART_HEIGHT = 320;
 
 // ── Moving Average ────────────────────────────────────────────────────────────
 function calcMA(data, period) {
-  // Only compute MA over real candles — skip gap markers entirely
-  // otherwise MA drops to 0 across gaps causing dramatic vertical spikes
   return data.map((d, i) => {
     if (d.isGap || d.close == null) return { ...d, [`ma${period}`]: null };
-    // Collect the last `period` real (non-gap) closes going backwards
     const realCloses = [];
     for (let j = i; j >= 0 && realCloses.length < period; j--) {
       if (!data[j].isGap && data[j].close != null) realCloses.push(data[j].close);
@@ -53,34 +38,28 @@ function enrichData(raw) {
 // ── Candlestick SVG Overlay ───────────────────────────────────────────────────
 function CandlestickOverlay({ data, containerWidth, yDomain }) {
   if (!data?.length || !containerWidth) return null;
-
   const drawW = containerWidth - CHART_MARGIN.left - CHART_MARGIN.right - Y_AXIS_WIDTH;
   const drawH = CHART_HEIGHT  - CHART_MARGIN.top  - CHART_MARGIN.bottom;
   const origX = CHART_MARGIN.left + Y_AXIS_WIDTH;
   const origY = CHART_MARGIN.top;
-
-  // Use yDomain from parent (same as Recharts YAxis) so overlay aligns perfectly
   const yMin = yDomain?.[0] ?? Math.min(...data.flatMap(d => [d.low].filter(Boolean)));
   const yMax = yDomain?.[1] ?? Math.max(...data.flatMap(d => [d.high].filter(Boolean)));
   if (yMin === yMax) return null;
-
   const toY   = price => origY + drawH - ((price - yMin) / (yMax - yMin)) * drawH;
   const slotW = drawW / data.length;
   const bodyW = Math.max(2, Math.floor(slotW * 0.55));
-
   return (
     <svg style={{ position:"absolute", top:0, left:0, width:containerWidth, height:CHART_HEIGHT, pointerEvents:"none" }}>
       {data.map((d, i) => {
-        // Skip gap markers — they render as blank space naturally
         if (d.isGap || d.open == null || d.close == null || d.high == null || d.low == null) return null;
-        const isUp       = d.close >= d.open;
-        const color      = isUp ? "#22c55e" : "#ef4444";
-        const xC         = origX + i * slotW + slotW / 2;
-        const yHigh      = toY(d.high);
-        const yLow       = toY(d.low);
+        const isUp   = d.close >= d.open;
+        const color  = isUp ? "#22c55e" : "#ef4444";
+        const xC     = origX + i * slotW + slotW / 2;
+        const yHigh  = toY(d.high);
+        const yLow   = toY(d.low);
         const bodyTop    = Math.min(toY(d.open), toY(d.close));
         const bodyBottom = Math.max(toY(d.open), toY(d.close));
-        const bodyH      = Math.max(2, bodyBottom - bodyTop);
+        const bodyH  = Math.max(2, bodyBottom - bodyTop);
         return (
           <g key={i}>
             <line x1={xC} y1={yHigh} x2={xC} y2={bodyTop} stroke={color} strokeWidth={1.5} />
@@ -93,11 +72,11 @@ function CandlestickOverlay({ data, containerWidth, yDomain }) {
   );
 }
 
-// ── Price Tooltip ─────────────────────────────────────────────────────────────
-function PriceTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  const d    = payload[0]?.payload;
-  if (!d) return null;
+// ── Price Tooltip (Data mode only) ────────────────────────────────────────────
+function PriceTooltip({ active, payload, label, enabled }) {
+  if (!enabled || !active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d || d.isGap) return null;
   const isUp   = d.close >= d.open;
   const change = d.open ? (((d.close - d.open) / d.open) * 100).toFixed(2) : null;
   return (
@@ -114,7 +93,7 @@ function PriceTooltip({ active, payload, label }) {
   );
 }
 
-// ── Intel Bubble ──────────────────────────────────────────────────────────────
+// ── Intel Bubble (Intel mode only) ────────────────────────────────────────────
 function IntelBubble({ intel, position }) {
   if (!intel) return null;
   const color = { bullish:"#22c55e", bearish:"#ef4444", neutral:"#f59e0b" }[intel.sentiment] || "#888";
@@ -136,26 +115,27 @@ export default function ChartPanel({
   data = [],
   symbol,
   market,
-  timeframe,           // controlled by parent
-  historyLoading,      // true while injector re-fetches for new timeframe
-  onTimeframeChange,   // (tf) => void — parent re-fetches when this fires
+  timeframe,
+  historyLoading,
+  onTimeframeChange,
   onIntelRequest,
 }) {
-  const [chartType, setChartType]           = useState("candlestick");
-  const [showMA5, setShowMA5]               = useState(true);
-  const [showMA20, setShowMA20]             = useState(true);
-  const [intel, setIntel]                   = useState(null);
-  const [intelPos, setIntelPos]             = useState({ x:0, y:0 });
-  const [intelLoading, setIntelLoading]     = useState(false);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [chartType,       setChartType]       = useState("candlestick");
+  const [showMA5,         setShowMA5]         = useState(true);
+  const [showMA20,        setShowMA20]        = useState(true);
+  const [hoverMode,       setHoverMode]       = useState("data");  // "data" | "intel"
+  const [intel,           setIntel]           = useState(null);
+  const [intelPos,        setIntelPos]        = useState({ x:0, y:0 });
+  const [intelLoading,    setIntelLoading]    = useState(false);
+  const [containerWidth,  setContainerWidth]  = useState(0);
 
   const hoverTimer   = useRef(null);
   const intelCache   = useRef({});
   const containerRef = useRef(null);
 
-  const enriched = enrichData(data);
+  const enriched   = enrichData(data);
+  const realCandles = enriched.filter(d => !d.isGap && d.close != null);
 
-  // Measure container for SVG overlay
   useEffect(() => {
     if (!containerRef.current) return;
     const ro = new ResizeObserver(entries => {
@@ -164,10 +144,6 @@ export default function ChartPanel({
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
-
-  // Y domain — must match overlay calculation
-  // Filter out gap markers for price calculations
-  const realCandles = enriched.filter(d => !d.isGap && d.close != null);
 
   const yDomain = (() => {
     if (!realCandles.length) return ["auto", "auto"];
@@ -179,10 +155,11 @@ export default function ChartPanel({
     return [Math.floor(minP - pad), Math.ceil(maxP + pad)];
   })();
 
-  // Clear intel cache when symbol or timeframe changes
-  useEffect(() => { intelCache.current = {}; }, [symbol, timeframe]);
+  useEffect(() => { intelCache.current = {}; setIntel(null); }, [symbol, timeframe]);
 
+  // Only fires intel fetch when in Intel mode
   const handleChartMouseMove = useCallback((chartData, event) => {
+    if (hoverMode !== "intel") return;
     if (!chartData?.activePayload?.[0]) return;
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(async () => {
@@ -204,12 +181,19 @@ export default function ChartPanel({
       setIntelPos({ x:(event?.clientX||300)+12, y:(event?.clientY||200)-160 });
       setIntel({ ...result, cached:!!intelCache.current[cacheKey] });
     }, config.ai.hoverDelayMs);
-  }, [symbol, onIntelRequest]);
+  }, [symbol, onIntelRequest, hoverMode]);
 
   const handleChartMouseLeave = useCallback(() => {
     clearTimeout(hoverTimer.current);
     setIntel(null);
   }, []);
+
+  // Clear intel bubble when switching modes
+  const handleModeSwitch = (mode) => {
+    setHoverMode(mode);
+    setIntel(null);
+    clearTimeout(hoverTimer.current);
+  };
 
   const handleTimeframe = (tf) => {
     if (tf === timeframe) return;
@@ -220,8 +204,11 @@ export default function ChartPanel({
 
   return (
     <div className="chart-panel">
-      {/* Controls */}
+
+      {/* ── Controls ── */}
       <div className="chart-controls">
+
+        {/* Chart type */}
         <div className="chart-type-toggle">
           <Tooltip id="tooltip-chart-candlestick">
             <button className={`ctrl-btn ${chartType==="candlestick"?"active":""}`} onClick={()=>setChartType("candlestick")}>Candles</button>
@@ -230,11 +217,13 @@ export default function ChartPanel({
             <button className={`ctrl-btn ${chartType==="line"?"active":""}`} onClick={()=>setChartType("line")}>Line</button>
           </Tooltip>
         </div>
+
+        {/* Timeframes */}
         <div className="timeframe-toggle">
           {["1D","1W","1M"].map(tf => (
             <Tooltip key={tf} id={`tooltip-chart-timeframe-${tf}`}>
               <button
-                className={`ctrl-btn ${timeframe===tf?"active":""} ${historyLoading&&timeframe===tf?"loading":""}`}
+                className={`ctrl-btn ${timeframe===tf?"active":""}`}
                 onClick={() => handleTimeframe(tf)}
                 disabled={historyLoading}
               >
@@ -243,6 +232,8 @@ export default function ChartPanel({
             </Tooltip>
           ))}
         </div>
+
+        {/* MA toggles */}
         <div className="ma-toggles">
           <Tooltip id="tooltip-chart-ma5">
             <button className={`ma-btn ma5 ${showMA5?"active":""}`} onClick={()=>setShowMA5(v=>!v)}>MA5</button>
@@ -250,13 +241,29 @@ export default function ChartPanel({
           <Tooltip id="tooltip-chart-ma20">
             <button className={`ma-btn ma20 ${showMA20?"active":""}`} onClick={()=>setShowMA20(v=>!v)}>MA20</button>
           </Tooltip>
-          <Tooltip id="tooltip-chart-insider">
-            <span className="intel-hint">⚡ Hover 1.5s for intel</span>
-          </Tooltip>
         </div>
+
+        {/* ── Hover Mode Toggle — Data | Intel ── */}
+        <Tooltip id="tooltip-chart-hover-mode">
+          <div className="hover-mode-toggle">
+            <button
+              className={`hover-mode-btn ${hoverMode==="data" ? "active data" : ""}`}
+              onClick={() => handleModeSwitch("data")}
+            >
+              📊 Data
+            </button>
+            <button
+              className={`hover-mode-btn ${hoverMode==="intel" ? "active intel" : ""}`}
+              onClick={() => handleModeSwitch("intel")}
+            >
+              ⚡ Intel
+            </button>
+          </div>
+        </Tooltip>
+
       </div>
 
-      {/* Chart */}
+      {/* ── Chart ── */}
       <div className="chart-container" ref={containerRef} style={{ position:"relative", minHeight:CHART_HEIGHT }}>
         {isLoading ? (
           <div className="chart-loading">
@@ -266,7 +273,9 @@ export default function ChartPanel({
           <>
             <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
               <ComposedChart data={enriched} margin={CHART_MARGIN}
-                onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
+                onMouseMove={handleChartMouseMove}
+                onMouseLeave={handleChartMouseLeave}
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis
                   dataKey="label"
@@ -276,9 +285,16 @@ export default function ChartPanel({
                   interval="preserveStartEnd"
                   tickFormatter={v => (!v || String(v).startsWith("gap")) ? "" : v}
                 />
-                <YAxis domain={yDomain} tick={{fill:"#9ca3af",fontSize:11}} tickLine={false}
-                  axisLine={false} tickFormatter={v=>v.toLocaleString()} width={Y_AXIS_WIDTH} />
-                <RechartsTooltip content={<PriceTooltip />} />
+                <YAxis
+                  domain={yDomain}
+                  tick={{fill:"#9ca3af",fontSize:11}}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={v=>v.toLocaleString()}
+                  width={Y_AXIS_WIDTH}
+                />
+                {/* Pass enabled flag — OHLC tooltip only shows in Data mode */}
+                <RechartsTooltip content={<PriceTooltip enabled={hoverMode==="data"} />} />
                 <Line dataKey="close" stroke="transparent" dot={false} isAnimationActive={false} connectNulls={false} />
                 {chartType==="line" && (
                   <Line type="monotone" dataKey="close" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
@@ -291,21 +307,27 @@ export default function ChartPanel({
                 )}
               </ComposedChart>
             </ResponsiveContainer>
+
             {chartType==="candlestick" && containerWidth>0 && (
               <CandlestickOverlay data={enriched} containerWidth={containerWidth} yDomain={yDomain} />
             )}
           </>
         )}
-        {intelLoading && <div className="intel-loading">⚡ Fetching intel...</div>}
-        {intel && !intelLoading && <IntelBubble intel={intel} position={intelPos} />}
+
+        {/* Intel bubble only shows in Intel mode */}
+        {hoverMode==="intel" && intelLoading && <div className="intel-loading">⚡ Fetching intel...</div>}
+        {hoverMode==="intel" && intel && !intelLoading && <IntelBubble intel={intel} position={intelPos} />}
       </div>
 
-      {/* Legend */}
+      {/* ── Legend ── */}
       <div className="chart-legend">
         {showMA5  && <span className="legend-item ma5">— MA5</span>}
         {showMA20 && <span className="legend-item ma20">— MA20</span>}
         <span className="legend-item up">■ Up</span>
         <span className="legend-item down">■ Down</span>
+        {hoverMode === "intel" && (
+          <span className="legend-item" style={{color:"#f59e0b", marginLeft:"8px"}}>⚡ Intel mode — hover 1.5s on candle</span>
+        )}
         <span className="legend-item" style={{color:"#4b5563",marginLeft:"auto"}}>
           {realCandles.length} candles
         </span>
