@@ -438,6 +438,7 @@ a { color: var(--gold); }
   background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius-md); padding: 16px;
   display: flex; flex-direction: column; gap: 12px;
+  flex-shrink: 0;
 }
 
 .mode-selector { display: flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
@@ -738,6 +739,7 @@ a { color: var(--gold); }
   border-radius: var(--radius-md);
   margin-top: 12px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 .strategy-header {
   display: flex; align-items: center; justify-content: space-between;
