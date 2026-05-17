@@ -527,3 +527,227 @@ a { color: var(--gold); }
   gap: 4px;
 }
 .set-market-info .info-item { font-size: 10px; color: var(--text-muted); }
+
+/* ── StrategyPanel — Phase 3 ────────────────────────────────────────────────── */
+
+.strategy-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.strategy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.strategy-header:hover { background: var(--bg-hover); }
+
+.strategy-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.strategy-toggle-btn {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* ── Body ── */
+.strategy-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Selector ── */
+.strategy-selector { display: flex; flex-direction: column; gap: 6px; }
+.strategy-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.strategy-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.strategy-opt {
+  padding: 4px 9px;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+.strategy-opt:hover { border-color: var(--gold); color: var(--gold); }
+.strategy-opt.active {
+  background: var(--gold-dim);
+  border-color: var(--gold);
+  color: var(--gold-light);
+  font-weight: 700;
+}
+
+/* ── Description ── */
+.strategy-description {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding: 6px 8px;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--gold);
+}
+
+/* ── Signal Display ── */
+.signal-display {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.signal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  color: #000;
+  letter-spacing: 0.05em;
+}
+
+.signal-symbol {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.signal-price {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.signal-reason {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.signal-levels {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+}
+.sl-level { color: var(--red); }
+.tp-level { color: var(--green); }
+
+.signal-waiting {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 8px 0;
+}
+
+/* ── Pending Trade Confirmation ── */
+.trade-confirm {
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid;
+  animation: fadeIn 0.2s ease;
+}
+.confirm-buy  { background: var(--green-dim); border-color: var(--green); }
+.confirm-sell { background: var(--red-dim);   border-color: var(--red); }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.confirm-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.confirm-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.confirm-details strong { color: var(--text-primary); }
+
+.confirm-cost {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.confirm-btn {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  transition: opacity 0.15s;
+}
+.confirm-btn:hover { opacity: 0.85; }
+
+.confirm-yes {
+  background: var(--green);
+  color: #000;
+}
+.confirm-no {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* ── Notification Toast ── */
+.strategy-notification {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  animation: fadeIn 0.2s ease;
+}
+.strategy-notification.success { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.strategy-notification.error   { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+.strategy-notification.info    { background: var(--bg-raised);  color: var(--text-secondary); border: 1px solid var(--border); }
+
+/* ── Positions table: strategy column ── */
+.pos-strategy {
+  font-size: 10px;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
