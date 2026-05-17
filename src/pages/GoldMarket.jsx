@@ -184,56 +184,143 @@ export default function GoldMarket({
         </div>
       </div>
 
-      {/* ── Main Body: Panel 1 (chart) + Panel 2 (controls) ── */}
+      {/* ── Main Body: Left column (chart + bottom) | Right column (controls) ── */}
       <div className="market-body">
 
-        {/* Panel 1 — Chart, independent scroll */}
-        <div className="panel-chart">
-          <ChartPanel
-            data={priceHistory}
-            symbol={activeSymbol}
-            market="gold"
-            timeframe={timeframe}
-            historyLoading={historyLoading}
-            onTimeframeChange={setTimeframe}
-            onIntelRequest={fetchIntel}
-          />
+        {/* Left column — chart on top, positions+log stacked below */}
+        <div className="panel-left">
 
-          {hourlyPnL.length > 0 && (
-            <div className="hourly-pnl">
-              <div className="section-title">
-                Hourly P&L — Gold
-                <TooltipIcon content="Your profit or loss from gold trades broken down by hour." />
+          {/* Chart — scrollable, fills available height */}
+          <div className="panel-chart">
+            <ChartPanel
+              data={priceHistory}
+              symbol={activeSymbol}
+              market="gold"
+              timeframe={timeframe}
+              historyLoading={historyLoading}
+              onTimeframeChange={setTimeframe}
+              onIntelRequest={fetchIntel}
+            />
+
+            {hourlyPnL.length > 0 && (
+              <div className="hourly-pnl">
+                <div className="section-title">
+                  Hourly P&L — Gold
+                  <TooltipIcon content="Profit or loss from gold trades by hour." />
+                </div>
+                <ResponsiveContainer width="100%" height={80}>
+                  <BarChart data={hourlyPnL} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+                    <XAxis dataKey="hour" tick={{ fill: "#9ca3af", fontSize: 10 }} tickLine={false} />
+                    <YAxis hide domain={["auto", "auto"]} />
+                    <Bar dataKey="pnl" radius={[2, 2, 0, 0]} isAnimationActive={false}>
+                      {hourlyPnL.map((entry, i) => (
+                        <Cell key={i} fill={entry.pnl >= 0 ? "#22c55e" : "#ef4444"} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <ResponsiveContainer width="100%" height={80}>
-                <BarChart data={hourlyPnL} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
-                  <XAxis dataKey="hour" tick={{ fill: "#9ca3af", fontSize: 10 }} tickLine={false} />
-                  <YAxis hide domain={["auto", "auto"]} />
-                  <Bar dataKey="pnl" radius={[2, 2, 0, 0]} isAnimationActive={false}>
-                    {hourlyPnL.map((entry, i) => (
-                      <Cell key={i} fill={entry.pnl >= 0 ? "#22c55e" : "#ef4444"} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+            )}
 
-          {/* Market info inside panel 1 so it scrolls with chart */}
-          <div className="market-info-bar" style={{ padding: 0, border: "none" }}>
-            <Tooltip content="Thai gold price is calculated from XAUUSD spot × USD/THB rate × 96.5% purity factor, rounded to nearest ฿50 per market convention.">
-              <span className="info-item">ℹ Thai gold formula: XAUUSD × THB rate × 0.965</span>
-            </Tooltip>
-            <Tooltip content="Gold market is open Monday–Friday, 24 hours. Closed on weekends.">
-              <span className="info-item">⏰ Gold hours: Mon–Fri 24×5</span>
-            </Tooltip>
-            <Tooltip content="Minimum trade size is 1 baht-weight (15.244 grams at 96.5% purity). No brokerage fee — dealer spread is baked into the quoted price.">
-              <span className="info-item">📦 Min: 1 baht-weight | No commission</span>
-            </Tooltip>
+            <div className="market-info-bar" style={{ padding: 0, border: "none" }}>
+              <Tooltip content="Thai gold price: XAUUSD × USD/THB × 96.5% purity, rounded ฿50.">
+                <span className="info-item">ℹ Thai gold formula: XAUUSD × THB rate × 0.965</span>
+              </Tooltip>
+              <Tooltip content="Gold market open Mon–Fri 24 hours. Closed weekends.">
+                <span className="info-item">⏰ Gold hours: Mon–Fri 24×5</span>
+              </Tooltip>
+              <Tooltip content="Min 1 baht-weight (15.244g at 96.5% purity). No commission.">
+                <span className="info-item">📦 Min: 1 baht-weight | No commission</span>
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* Panel Bottom — positions + activity log, stacked below chart */}
+          <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
+            <div className="panel3-header">
+              <span className="panel3-title">
+                Positions ({goldPositions.length}) · Activity ({activityEvents.filter(e => e.market === "gold").length})
+              </span>
+              <button
+                className="panel3-collapse-btn"
+                onClick={() => setPanel3Collapsed(v => !v)}
+              >
+                {panel3Collapsed ? "▲ Show" : "▼ Hide"}
+              </button>
+            </div>
+
+            {!panel3Collapsed && (
+              <div className="panel-bottom-scroll">
+
+                {/* Positions */}
+                <div>
+                  <div className="panel-bottom-section-title">
+                    Open Gold Positions
+                    <TooltipIcon content="Open gold trades. Entry price, P&L, stop loss and take profit." />
+                  </div>
+                  {goldPositions.length === 0 ? (
+                    <div className="empty-state">No open positions.</div>
+                  ) : (
+                    <div className="positions-table">
+                      <div className="pos-row header">
+                        <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
+                        <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
+                        <span>Strategy</span><span>Action</span>
+                      </div>
+                      {goldPositions.map(pos => {
+                        const pnlUp = pos.unrealisedPnL >= 0;
+                        return (
+                          <div key={pos.id} className="pos-row">
+                            <span className="pos-symbol">{pos.symbol}</span>
+                            <span>{pos.qty}</span>
+                            <span>฿{pos.entryPrice?.toLocaleString()}</span>
+                            <span>฿{pos.currentPrice?.toLocaleString()}</span>
+                            <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                              {pnlUp ? "+" : ""}฿{pos.unrealisedPnL?.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                            </span>
+                            <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                              {pnlUp ? "+" : ""}{pos.unrealisedPnLPct?.toFixed(2)}%
+                            </span>
+                            <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
+                            <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                            <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
+                            <span>
+                              <Tooltip content="Close at current market price.">
+                                <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>
+                                  Close
+                                </button>
+                              </Tooltip>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Activity Log */}
+                <div>
+                  <div className="panel-bottom-section-title">
+                    Activity Log — Gold
+                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade." />
+                    {activityEvents.filter(e => e.market === "gold").length > 0 && (
+                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__gold")}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <ActivityLog
+                    events={activityEvents.filter(e => e.market === "gold")}
+                    onClear={() => onActivityEvent?.("__clear__gold")}
+                  />
+                </div>
+
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Panel 2 — Order + Strategy, independent scroll */}
+        {/* Right column — Order + Strategy, full height scroll */}
         <div className="panel-controls">
           <OrderPanel
             market="gold"
@@ -259,98 +346,6 @@ export default function GoldMarket({
             onStrategyEvent={handleStrategyEvent}
           />
         </div>
-      </div>
-
-      {/* ── Panel 3 — Positions + Activity Log ── */}
-      <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
-
-        {/* Always-visible header bar with collapse toggle */}
-        <div className="panel3-header">
-          <div className="panel3-tab">
-            <span>Open Positions ({goldPositions.length})</span>
-          </div>
-          <div className="panel3-tab">
-            <span>Activity Log ({activityEvents.filter(e => e.market === "gold").length})</span>
-            <button
-              className="panel3-collapse-btn"
-              onClick={() => setPanel3Collapsed(v => !v)}
-              title={panel3Collapsed ? "Expand panel" : "Collapse panel"}
-            >
-              {panel3Collapsed ? "▲ Show" : "▼ Hide"}
-            </button>
-          </div>
-        </div>
-
-        {!panel3Collapsed && (
-          <>
-            {/* Left half — Positions */}
-            <div className="panel-bottom-half">
-              <div className="panel-bottom-content">
-                <div className="section-title" style={{ paddingTop: 0 }}>
-                  Open Gold Positions
-                  <TooltipIcon content="Currently open gold trades. Entry price, P&L, stop loss and take profit." />
-                </div>
-                {goldPositions.length === 0 ? (
-                  <div className="empty-state">No open positions.</div>
-                ) : (
-                  <div className="positions-table">
-                    <div className="pos-row header">
-                      <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
-                      <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                      <span>Strategy</span><span>Action</span>
-                    </div>
-                    {goldPositions.map(pos => {
-                      const pnlUp = pos.unrealisedPnL >= 0;
-                      return (
-                        <div key={pos.id} className="pos-row">
-                          <span className="pos-symbol">{pos.symbol}</span>
-                          <span>{pos.qty}</span>
-                          <span>฿{pos.entryPrice?.toLocaleString()}</span>
-                          <span>฿{pos.currentPrice?.toLocaleString()}</span>
-                          <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                            {pnlUp ? "+" : ""}฿{pos.unrealisedPnL?.toLocaleString("en-US", { minimumFractionDigits: 0 })}
-                          </span>
-                          <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                            {pnlUp ? "+" : ""}{pos.unrealisedPnLPct?.toFixed(2)}%
-                          </span>
-                          <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
-                          <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
-                          <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
-                          <span>
-                            <Tooltip content="Close this position at the current market price.">
-                              <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>
-                                Close
-                              </button>
-                            </Tooltip>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right half — Activity Log */}
-            <div className="panel-bottom-half">
-              <div className="panel-bottom-content">
-                <div className="section-title" style={{ paddingTop: 0 }}>
-                  Activity Log — Gold
-                  <TooltipIcon content="Real-time feed of every signal, arm, buy, sell, SL/TP hit, and blocked trade for Gold." />
-                  {activityEvents.filter(e => e.market === "gold").length > 0 && (
-                    <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__gold")}>
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <ActivityLog
-                  events={activityEvents.filter(e => e.market === "gold")}
-                  onClear={() => onActivityEvent?.("__clear__gold")}
-                />
-              </div>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );

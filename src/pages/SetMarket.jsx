@@ -209,13 +209,13 @@ export default function SetMarket({
         </div>
       </div>
 
-      {/* ── Main Body: Watchlist + Panel 1 (chart) + Panel 2 (controls) ── */}
+      {/* ── Main Body: Watchlist | Left column (chart + bottom) | Right column (controls) ── */}
       <div className="market-body">
 
-        {/* Watchlist — leftmost column */}
+        {/* Watchlist — leftmost column, full height scroll */}
         <div className="panel-watchlist">
           <div className="watchlist-panel">
-            <div className="section-title" style={{ position: "static" }}>
+            <div className="section-title">
               Watchlist
               <TooltipIcon content="8 major SET/MAI stocks. Click to view chart and trade. Prices 15-min delayed." />
             </div>
@@ -239,51 +239,136 @@ export default function SetMarket({
           </div>
         </div>
 
-        {/* Panel 1 — Chart, independent scroll */}
-        <div className="panel-chart">
-          <ChartPanel
-            data={priceHistory}
-            symbol={activeSymbol}
-            market="set"
-            timeframe={timeframe}
-            historyLoading={historyLoading}
-            onTimeframeChange={setTimeframe}
-            onIntelRequest={fetchIntel}
-          />
+        {/* Left column — chart on top, positions+log stacked below */}
+        <div className="panel-left">
 
-          {hourlyPnL.length > 0 && (
-            <div className="hourly-pnl">
-              <div className="section-title">
-                Hourly P&L — SET
-                <TooltipIcon content="Your profit or loss from SET trades broken down by hour." />
+          {/* Chart — scrollable */}
+          <div className="panel-chart">
+            <ChartPanel
+              data={priceHistory}
+              symbol={activeSymbol}
+              market="set"
+              timeframe={timeframe}
+              historyLoading={historyLoading}
+              onTimeframeChange={setTimeframe}
+              onIntelRequest={fetchIntel}
+            />
+
+            {hourlyPnL.length > 0 && (
+              <div className="hourly-pnl">
+                <div className="section-title">
+                  Hourly P&L — SET
+                  <TooltipIcon content="Profit or loss from SET trades by hour." />
+                </div>
+                <ResponsiveContainer width="100%" height={80}>
+                  <BarChart data={hourlyPnL} margin={{ top:4, right:8, left:8, bottom:0 }}>
+                    <XAxis dataKey="hour" tick={{fill:"#9ca3af",fontSize:10}} tickLine={false} />
+                    <YAxis hide domain={["auto","auto"]} />
+                    <Bar dataKey="pnl" radius={[2,2,0,0]} isAnimationActive={false}>
+                      {hourlyPnL.map((e,i) => <Cell key={i} fill={e.pnl>=0?"#22c55e":"#ef4444"} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <ResponsiveContainer width="100%" height={80}>
-                <BarChart data={hourlyPnL} margin={{ top:4, right:8, left:8, bottom:0 }}>
-                  <XAxis dataKey="hour" tick={{fill:"#9ca3af",fontSize:10}} tickLine={false} />
-                  <YAxis hide domain={["auto","auto"]} />
-                  <Bar dataKey="pnl" radius={[2,2,0,0]} isAnimationActive={false}>
-                    {hourlyPnL.map((e,i) => <Cell key={i} fill={e.pnl>=0?"#22c55e":"#ef4444"} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+            )}
 
-          {/* Market info inside panel 1 */}
-          <div className="market-info-bar" style={{ padding: 0, border: "none" }}>
-            <Tooltip content="SET data is 15 minutes delayed via Yahoo Finance.">
-              <span className="info-item">⚠ Prices 15-min delayed</span>
-            </Tooltip>
-            <Tooltip content="Commission: 0.157% of trade value (min ฿50) + 7% VAT + 0.1% transfer fee on sell.">
-              <span className="info-item">💸 Commission: 0.157% + VAT + 0.1% transfer</span>
-            </Tooltip>
-            <Tooltip content="SET minimum order is 1 lot = 100 shares.">
-              <span className="info-item">📦 Min: 1 lot = 100 shares</span>
-            </Tooltip>
+            <div className="market-info-bar" style={{ padding: 0, border: "none" }}>
+              <Tooltip content="SET data is 15 minutes delayed via Yahoo Finance.">
+                <span className="info-item">⚠ Prices 15-min delayed</span>
+              </Tooltip>
+              <Tooltip content="Commission: 0.157% of trade value (min ฿50) + 7% VAT + 0.1% transfer fee on sell.">
+                <span className="info-item">💸 Commission: 0.157% + VAT + 0.1% transfer</span>
+              </Tooltip>
+              <Tooltip content="SET minimum order is 1 lot = 100 shares.">
+                <span className="info-item">📦 Min: 1 lot = 100 shares</span>
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* Panel Bottom — positions + activity log stacked below chart */}
+          <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
+            <div className="panel3-header">
+              <span className="panel3-title">
+                Positions ({setPositions.length}) · Activity ({setEventsCount})
+              </span>
+              <button
+                className="panel3-collapse-btn"
+                onClick={() => setPanel3Collapsed(v => !v)}
+              >
+                {panel3Collapsed ? "▲ Show" : "▼ Hide"}
+              </button>
+            </div>
+
+            {!panel3Collapsed && (
+              <div className="panel-bottom-scroll">
+
+                {/* Positions */}
+                <div>
+                  <div className="panel-bottom-section-title">
+                    Open SET Positions
+                    <TooltipIcon content="Open SET/MAI positions. Commission and transfer fees already deducted from P&L." />
+                  </div>
+                  {setPositions.length === 0 ? (
+                    <div className="empty-state">No open positions. Select a stock and place a buy order.</div>
+                  ) : (
+                    <div className="positions-table">
+                      <div className="pos-row header">
+                        <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
+                        <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
+                        <span>Strategy</span><span>Action</span>
+                      </div>
+                      {setPositions.map(pos => {
+                        const pnlUp = pos.unrealisedPnL >= 0;
+                        return (
+                          <div key={pos.id} className="pos-row">
+                            <span className="pos-symbol">{pos.symbol?.replace(".BK","")}</span>
+                            <span>{pos.qty?.toLocaleString()}</span>
+                            <span>฿{pos.entryPrice?.toFixed(2)}</span>
+                            <span>฿{pos.currentPrice?.toFixed(2)}</span>
+                            <span className={pnlUp?"pnl-up":"pnl-down"}>
+                              {pnlUp?"+":""}฿{pos.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}
+                            </span>
+                            <span className={pnlUp?"pnl-up":"pnl-down"}>
+                              {pnlUp?"+":""}{pos.unrealisedPnLPct?.toFixed(2)}%
+                            </span>
+                            <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
+                            <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                            <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
+                            <span>
+                              <Tooltip content="Close at current market price.">
+                                <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>Close</button>
+                              </Tooltip>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Activity Log */}
+                <div>
+                  <div className="panel-bottom-section-title">
+                    Activity Log — SET
+                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade." />
+                    {setEventsCount > 0 && (
+                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__set")}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <ActivityLog
+                    events={activityEvents.filter(e => e.market === "set")}
+                    onClear={() => onActivityEvent?.("__clear__set")}
+                  />
+                </div>
+
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Panel 2 — Order + Strategy, independent scroll */}
+        {/* Right column — Order + Strategy, full height scroll */}
         <div className="panel-controls">
           <OrderPanel
             market="set"
@@ -309,95 +394,6 @@ export default function SetMarket({
             onStrategyEvent={handleStrategyEvent}
           />
         </div>
-      </div>
-
-      {/* ── Panel 3 — Positions + Activity Log ── */}
-      <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
-
-        <div className="panel3-header">
-          <div className="panel3-tab">
-            <span>Open Positions ({setPositions.length})</span>
-          </div>
-          <div className="panel3-tab">
-            <span>Activity Log — SET ({setEventsCount})</span>
-            <button
-              className="panel3-collapse-btn"
-              onClick={() => setPanel3Collapsed(v => !v)}
-              title={panel3Collapsed ? "Expand panel" : "Collapse panel"}
-            >
-              {panel3Collapsed ? "▲ Show" : "▼ Hide"}
-            </button>
-          </div>
-        </div>
-
-        {!panel3Collapsed && (
-          <>
-            {/* Left half — Positions */}
-            <div className="panel-bottom-half">
-              <div className="panel-bottom-content">
-                <div className="section-title" style={{ paddingTop: 0 }}>
-                  Open SET Positions
-                  <TooltipIcon content="Open SET/MAI positions. Commission and transfer fees already deducted from P&L." />
-                </div>
-                {setPositions.length === 0 ? (
-                  <div className="empty-state">No open positions. Select a stock and place a buy order.</div>
-                ) : (
-                  <div className="positions-table">
-                    <div className="pos-row header">
-                      <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
-                      <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                      <span>Strategy</span><span>Action</span>
-                    </div>
-                    {setPositions.map(pos => {
-                      const pnlUp = pos.unrealisedPnL >= 0;
-                      return (
-                        <div key={pos.id} className="pos-row">
-                          <span className="pos-symbol">{pos.symbol?.replace(".BK","")}</span>
-                          <span>{pos.qty?.toLocaleString()}</span>
-                          <span>฿{pos.entryPrice?.toFixed(2)}</span>
-                          <span>฿{pos.currentPrice?.toFixed(2)}</span>
-                          <span className={pnlUp?"pnl-up":"pnl-down"}>
-                            {pnlUp?"+":""}฿{pos.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}
-                          </span>
-                          <span className={pnlUp?"pnl-up":"pnl-down"}>
-                            {pnlUp?"+":""}{pos.unrealisedPnLPct?.toFixed(2)}%
-                          </span>
-                          <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
-                          <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
-                          <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
-                          <span>
-                            <Tooltip content="Close this position at current market price.">
-                              <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>Close</button>
-                            </Tooltip>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right half — Activity Log */}
-            <div className="panel-bottom-half">
-              <div className="panel-bottom-content">
-                <div className="section-title" style={{ paddingTop: 0 }}>
-                  Activity Log — SET
-                  <TooltipIcon content="Real-time feed of every signal, arm, buy, sell, SL/TP hit, and blocked trade for SET." />
-                  {setEventsCount > 0 && (
-                    <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__set")}>
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <ActivityLog
-                  events={activityEvents.filter(e => e.market === "set")}
-                  onClear={() => onActivityEvent?.("__clear__set")}
-                />
-              </div>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );
