@@ -1,4 +1,4 @@
-/**
+ /**
  * GoldMarket.jsx
  * Phase 4:
  *   - 3-panel independent scroll layout (market-body + panel-bottom)
