@@ -332,7 +332,8 @@ a { color: var(--gold); }
   padding: 16px;
   background: var(--bg-surface);
   min-height: 0;
-  max-height: calc(100vh - var(--header-h) - var(--tabnav-h) - var(--ticker-h));
+  height: 0;          /* ← KEY: forces grid child to not stretch beyond grid row */
+  min-height: 100%;   /* ← KEY: then fills back to 100% of grid cell */
 }
 
 /* Watchlist — SET only, leftmost column */
