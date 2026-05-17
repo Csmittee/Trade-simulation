@@ -1,4 +1,4 @@
- /**
+  /**
  * ChartPanel.jsx
  * Phase 4 patch: hover mode toggle — "Data" shows OHLC tooltip, "Intel" shows AI bubble.
  * They no longer fight each other.
