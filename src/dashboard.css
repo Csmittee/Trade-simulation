@@ -232,10 +232,10 @@ a { color: var(--gold); }
 .market-body {
   display: grid;
   grid-template-columns: 1fr var(--right-panel-w);
+  grid-template-rows: 1fr; /* single row fills all available height */
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  /* grid rows: market-body fills remaining height, children fill it */
   align-items: stretch;
 }
 .set-market .market-body {
@@ -321,7 +321,8 @@ a { color: var(--gold); }
   margin-bottom: 8px;
 }
 
-/* Right column — Order + Strategy, full height scroll */
+/* Right column — Order + Strategy, full height scroll
+   max-height = viewport minus header, tabnav, ticker so overflow-y activates */
 .panel-controls {
   overflow-y: auto;
   overflow-x: hidden;
@@ -331,6 +332,7 @@ a { color: var(--gold); }
   padding: 16px;
   background: var(--bg-surface);
   min-height: 0;
+  max-height: calc(100vh - var(--header-h) - var(--tabnav-h) - var(--ticker-h));
 }
 
 /* Watchlist — SET only, leftmost column */
@@ -341,6 +343,7 @@ a { color: var(--gold); }
   padding: 12px;
   background: var(--bg-surface);
   min-height: 0;
+  max-height: calc(100vh - var(--header-h) - var(--tabnav-h) - var(--ticker-h));
 }
 
 /* ── Chart Section (inside Panel 1) ─────────────────────────────────────────── */
