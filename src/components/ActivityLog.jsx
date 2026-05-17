@@ -1,4 +1,4 @@
- /**
+  /**
  * ActivityLog.jsx
  * Phase 4 — Real-time feed of all strategy and trade events.
  * Lives in Panel 3 (right half). Events pushed from market pages via onActivityEvent.
