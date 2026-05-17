@@ -123,7 +123,8 @@ export default function Dashboard() {
   const [enforceHours, setEnforceHours] = useState(true);
   const [showReset, setShowReset]       = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
-
+  const [activeStrategy, setActiveStrategy] = useState(null);  // Phase 4 BUG001 fix — lifted from market pages
+  const [activityEvents, setActivityEvents] = useState([]);     // Phase 4 — activity log feed
   // ── Load state from KV on mount ──────────────────────────────────────────────
   useEffect(() => {
     async function load() {
@@ -180,6 +181,21 @@ export default function Dashboard() {
     return json.data;
   }, []);
 
+// Activity log event handler — called by market pages
+  // Special string "__clear__gold" or "__clear__set" clears that market's events
+  const handleActivityEvent = useCallback((ev) => {
+    if (ev === "__clear__gold") {
+      setActivityEvents(prev => prev.filter(e => e.market !== "gold"));
+      return;
+    }
+    if (ev === "__clear__set") {
+      setActivityEvents(prev => prev.filter(e => e.market !== "set"));
+      return;
+    }
+    setActivityEvents(prev => [...prev.slice(-199), ev]); // keep last 200 events
+  }, []);
+
+  
   // ── Loading state ─────────────────────────────────────────────────────────
   if (!bootstrapped) {
     return (
@@ -308,20 +324,28 @@ export default function Dashboard() {
 
       {/* ── Tab Content ── */}
       <main className="tab-content">
-        {activeTab === "gold" && (
+         {activeTab === "gold" && (
           <GoldMarket
             portfolio={portfolio}
             setPortfolio={setPortfolio}
             enforceHours={enforceHours}
             onAIStrategy={handleAIStrategy}
+            activeStrategy={activeStrategy}
+            onStrategyChange={setActiveStrategy}
+            activityEvents={activityEvents}
+            onActivityEvent={handleActivityEvent}
           />
         )}
-        {activeTab === "set" && (
+       {activeTab === "set" && (
           <SetMarket
             portfolio={portfolio}
             setPortfolio={setPortfolio}
             enforceHours={enforceHours}
             onAIStrategy={handleAIStrategy}
+            activeStrategy={activeStrategy}
+            onStrategyChange={setActiveStrategy}
+            activityEvents={activityEvents}
+            onActivityEvent={handleActivityEvent}
           />
         )}
         {activeTab === "portfolio" && (
