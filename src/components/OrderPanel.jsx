@@ -1,4 +1,4 @@
-/**
+ /**
  * OrderPanel.jsx
  * Phase 4 patch: `mode` (manual|ai) lifted to parent so StrategyPanel
  * can be hidden when AI tab is active. Parent passes orderMode + onOrderModeChange.
