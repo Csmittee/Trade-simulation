@@ -1,38 +1,43 @@
 /**
  * strategy-injector.js
- * Phase 3 — Preset strategy signal engine.
- * Pure functions: receives price history + portfolio, returns a signal.
- * No API calls, no side effects. Wired into GoldMarket + SetMarket.
+ * Phase 3 patch — Added approaching alert + size-based execution rules.
  *
  * Signal shape:
- *   { signal: "buy"|"sell"|"hold"|null, reason: string,
- *     suggestedEntry: number, suggestedStop: number, suggestedTP: number }
+ *   { signal: "buy"|"sell"|"hold"|null,
+ *     reason: string,
+ *     approaching: boolean,
+ *     approachingReason: string,
+ *     approachingEta: string,
+ *     suggestedEntry: number,
+ *     suggestedStop: number,
+ *     suggestedTP: number }
  *
- * L006: Market-specific logic stays isolated in this file.
- *       Cross-market logic stays in portfolio-engine.js.
+ * Approaching alert — only predictable leadtime strategies:
+ *   ✅ MA Crossover        — gap < 0.3%
+ *   ✅ Golden/Death Cross  — gap < 0.5%
+ *   ✅ Support/Resistance  — price within 1% of level
+ *   ❌ RSI                 — spikes too fast, no leadtime
+ *   ❌ Volume Breakout     — sudden by definition
+ *
+ * Size-based execution tiers:
+ *   < 5%  of balance → auto-execute if armed
+ *   5–20% of balance → always force confirm
+ *   > 20% of balance → block + warning, manual only
  */
 
 import config from "../../config.js";
 
+export const SIZE_RULES = {
+  autoThreshold:    0.05,
+  confirmThreshold: 0.20,
+};
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
-/**
- * Run the active strategy against current price history.
- * @param {object} params
- * @param {Array}  params.priceHistory   - OHLC array from injector (may include gap candles)
- * @param {number} params.currentPrice   - latest tick price
- * @param {string} params.strategyId     - one of config.strategies.presets[].id
- * @param {object} params.portfolio      - current portfolio state (for position awareness)
- * @param {string} params.market         - "gold" | "set"
- * @returns {{ signal, reason, suggestedEntry, suggestedStop, suggestedTP } | null}
- */
 export function runStrategy({ priceHistory, currentPrice, strategyId, portfolio, market }) {
   if (!strategyId || !priceHistory?.length || !currentPrice) return null;
-
-  // Strip gap candles — strategy math only on real candles (L020/L021)
   const candles = priceHistory.filter(c => !c.isGap && c.close != null);
-  if (candles.length < 5) return null; // not enough data
-
+  if (candles.length < 5) return null;
   const preset = config.strategies.presets.find(p => p.id === strategyId);
   if (!preset) return null;
 
@@ -46,21 +51,25 @@ export function runStrategy({ priceHistory, currentPrice, strategyId, portfolio,
   }
 }
 
+/**
+ * Returns "auto" | "confirm" | "block" based on trade size vs balance.
+ */
+export function getExecutionTier(tradeValue, portfolioBalance) {
+  if (!portfolioBalance || portfolioBalance <= 0) return "confirm";
+  const pct = tradeValue / portfolioBalance;
+  if (pct > SIZE_RULES.confirmThreshold) return "block";
+  if (pct >= SIZE_RULES.autoThreshold)   return "confirm";
+  return "auto";
+}
+
 // ── Strategy 1: MA Crossover ──────────────────────────────────────────────────
-// Buy when MA5 crosses above MA20. Sell when MA5 crosses below MA20.
 
 function maCrossover(candles, currentPrice, { shortPeriod = 5, longPeriod = 20 }) {
-  if (candles.length < longPeriod + 1) {
-    return { signal: "hold", reason: `Need ${longPeriod + 1} candles — only ${candles.length} available`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
-  }
+  if (candles.length < longPeriod + 1) return noSignal(`Need ${longPeriod + 1} candles — only ${candles.length} available`, currentPrice);
 
-  const closes = candles.map(c => c.close);
-
-  // Current MAs
-  const maShortNow = sma(closes, shortPeriod);
-  const maLongNow  = sma(closes, longPeriod);
-
-  // Previous MAs (one candle back)
+  const closes      = candles.map(c => c.close);
+  const maShortNow  = sma(closes, shortPeriod);
+  const maLongNow   = sma(closes, longPeriod);
   const prevCloses  = closes.slice(0, -1);
   const maShortPrev = sma(prevCloses, shortPeriod);
   const maLongPrev  = sma(prevCloses, longPeriod);
@@ -68,87 +77,76 @@ function maCrossover(candles, currentPrice, { shortPeriod = 5, longPeriod = 20 }
   const crossedAbove = maShortPrev <= maLongPrev && maShortNow > maLongNow;
   const crossedBelow = maShortPrev >= maLongPrev && maShortNow < maLongNow;
 
-  if (crossedAbove) {
-    const stop = currentPrice * 0.98;  // 2% below entry
-    const tp   = currentPrice * 1.04;  // 4% above entry
-    return { signal: "buy", reason: `MA${shortPeriod} crossed above MA${longPeriod} — bullish momentum`, suggestedEntry: currentPrice, suggestedStop: parseFloat(stop.toFixed(2)), suggestedTP: parseFloat(tp.toFixed(2)) };
-  }
+  const gap    = Math.abs(maShortNow - maLongNow);
+  const gapPct = maLongNow > 0 ? (gap / maLongNow) * 100 : 999;
+  const approaching = !crossedAbove && !crossedBelow && gapPct < 0.3;
 
+  if (crossedAbove) {
+    return { signal: "buy", reason: `MA${shortPeriod} crossed above MA${longPeriod} — bullish momentum`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: parseFloat((currentPrice * 0.98).toFixed(2)), suggestedTP: parseFloat((currentPrice * 1.04).toFixed(2)) };
+  }
   if (crossedBelow) {
-    return { signal: "sell", reason: `MA${shortPeriod} crossed below MA${longPeriod} — bearish momentum`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+    return { signal: "sell", reason: `MA${shortPeriod} crossed below MA${longPeriod} — bearish momentum`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  }
+  if (approaching) {
+    const bullish = maShortNow < maLongNow; // MA5 rising toward MA20
+    return {
+      signal: "hold",
+      reason: `MA${shortPeriod} (${maShortNow?.toFixed(2)}) and MA${longPeriod} (${maLongNow?.toFixed(2)}) — gap ${gapPct.toFixed(2)}%`,
+      approaching: true,
+      approachingReason: `Gap ${gapPct.toFixed(2)}% — ${bullish ? "BUY crossover" : "SELL crossover"} imminent`,
+      approachingEta: "~1–3 candles",
+      suggestedEntry: currentPrice,
+      suggestedStop:  bullish ? parseFloat((currentPrice * 0.98).toFixed(2)) : null,
+      suggestedTP:    bullish ? parseFloat((currentPrice * 1.04).toFixed(2)) : null,
+    };
   }
 
   const trend = maShortNow > maLongNow ? "above" : "below";
-  return { signal: "hold", reason: `MA${shortPeriod} (${maShortNow?.toFixed(2)}) is ${trend} MA${longPeriod} (${maLongNow?.toFixed(2)}) — waiting for crossover`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  return noSignal(`MA${shortPeriod} (${maShortNow?.toFixed(2)}) ${trend} MA${longPeriod} (${maLongNow?.toFixed(2)}) — waiting for crossover`, currentPrice);
 }
 
 // ── Strategy 2: RSI Mean Reversion ───────────────────────────────────────────
-// Buy when RSI < 30 (oversold). Sell when RSI > 70 (overbought).
 
 function rsiReversion(candles, currentPrice, { period = 14, oversold = 30, overbought = 70 }) {
-  if (candles.length < period + 1) {
-    return { signal: "hold", reason: `Need ${period + 1} candles for RSI — only ${candles.length} available`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
-  }
-
-  const closes = candles.map(c => c.close);
-  const rsi    = calcRSI(closes, period);
+  if (candles.length < period + 1) return noSignal(`Need ${period + 1} candles for RSI — only ${candles.length} available`, currentPrice);
+  const rsi = calcRSI(candles.map(c => c.close), period);
 
   if (rsi < oversold) {
-    const stop = currentPrice * 0.97;
-    const tp   = currentPrice * 1.06;
-    return { signal: "buy", reason: `RSI ${rsi.toFixed(1)} — oversold below ${oversold}. Mean reversion entry.`, suggestedEntry: currentPrice, suggestedStop: parseFloat(stop.toFixed(2)), suggestedTP: parseFloat(tp.toFixed(2)) };
+    return { signal: "buy", reason: `RSI ${rsi.toFixed(1)} — oversold below ${oversold}. Mean reversion entry.`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: parseFloat((currentPrice * 0.97).toFixed(2)), suggestedTP: parseFloat((currentPrice * 1.06).toFixed(2)) };
   }
-
   if (rsi > overbought) {
-    return { signal: "sell", reason: `RSI ${rsi.toFixed(1)} — overbought above ${overbought}. Exit / take profit.`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+    return { signal: "sell", reason: `RSI ${rsi.toFixed(1)} — overbought above ${overbought}. Take profit.`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
   }
-
-  return { signal: "hold", reason: `RSI ${rsi.toFixed(1)} — neutral zone (${oversold}–${overbought}). No signal.`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  return noSignal(`RSI ${rsi.toFixed(1)} — neutral zone (${oversold}–${overbought})`, currentPrice);
 }
 
 // ── Strategy 3: Volume Breakout ───────────────────────────────────────────────
-// Buy when price breaks 20-day high with volume > 1.5x average.
 
 function breakoutVolume(candles, currentPrice, { lookback = 20, volumeMultiplier = 1.5 }) {
-  if (candles.length < lookback) {
-    return { signal: "hold", reason: `Need ${lookback} candles — only ${candles.length} available`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
-  }
+  if (candles.length < lookback) return noSignal(`Need ${lookback} candles — only ${candles.length} available`, currentPrice);
 
-  const recent = candles.slice(-lookback);
-  const prevCandles = recent.slice(0, -1); // exclude current candle for the high calculation
+  const recent      = candles.slice(-lookback);
+  const prevCandles = recent.slice(0, -1);
+  const prevHigh    = Math.max(...prevCandles.map(c => c.high));
+  const avgVolume   = prevCandles.reduce((s, c) => s + (c.volume || 0), 0) / prevCandles.length;
+  const lastVolume  = candles[candles.length - 1]?.volume || 0;
 
-  const prevHigh   = Math.max(...prevCandles.map(c => c.high));
-  const avgVolume  = prevCandles.reduce((s, c) => s + (c.volume || 0), 0) / prevCandles.length;
-  const lastCandle = candles[candles.length - 1];
-  const lastVolume = lastCandle?.volume || 0;
-
-  const priceBreakout  = currentPrice > prevHigh;
-  const volumeBreakout = avgVolume > 0 && lastVolume > avgVolume * volumeMultiplier;
-
-  if (priceBreakout && volumeBreakout) {
-    const stop = prevHigh * 0.99; // just below the broken level
-    const tp   = currentPrice + (currentPrice - prevHigh) * 2; // 2:1 R/R
-    return { signal: "buy", reason: `Price broke ${lookback}-bar high (฿${prevHigh.toFixed(2)}) with ${(lastVolume / avgVolume).toFixed(1)}x avg volume`, suggestedEntry: currentPrice, suggestedStop: parseFloat(stop.toFixed(2)), suggestedTP: parseFloat(tp.toFixed(2)) };
-  }
-
-  if (priceBreakout && !volumeBreakout) {
-    return { signal: "hold", reason: `Price above ${lookback}-bar high but volume too low (${(lastVolume / avgVolume || 0).toFixed(1)}x vs ${volumeMultiplier}x needed)`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  if (currentPrice > prevHigh && avgVolume > 0 && lastVolume > avgVolume * volumeMultiplier) {
+    const stop = parseFloat((prevHigh * 0.99).toFixed(2));
+    const tp   = parseFloat((currentPrice + (currentPrice - prevHigh) * 2).toFixed(2));
+    return { signal: "buy", reason: `Breakout above ฿${prevHigh.toFixed(2)} with ${(lastVolume/avgVolume).toFixed(1)}x volume`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: stop, suggestedTP: tp };
   }
 
   const gap = ((prevHigh - currentPrice) / prevHigh * 100).toFixed(2);
-  return { signal: "hold", reason: `Watching for breakout above ฿${prevHigh.toFixed(2)} (${gap}% away)`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  return noSignal(`Watching for breakout above ฿${prevHigh.toFixed(2)} (${gap}% away)`, currentPrice);
 }
 
 // ── Strategy 4: Golden Cross / Death Cross ────────────────────────────────────
-// Buy on MA50/MA200 golden cross. Sell on death cross.
 
 function goldenCross(candles, currentPrice, { shortPeriod = 50, longPeriod = 200 }) {
-  if (candles.length < longPeriod + 1) {
-    return { signal: "hold", reason: `Need ${longPeriod + 1} candles for Golden Cross — only ${candles.length} available (needs daily 1M data)`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
-  }
+  if (candles.length < longPeriod + 1) return noSignal(`Need ${longPeriod + 1} candles — only ${candles.length} available (needs 1M daily data)`, currentPrice);
 
-  const closes = candles.map(c => c.close);
-
+  const closes      = candles.map(c => c.close);
   const maShortNow  = sma(closes, shortPeriod);
   const maLongNow   = sma(closes, longPeriod);
   const prevCloses  = closes.slice(0, -1);
@@ -158,82 +156,91 @@ function goldenCross(candles, currentPrice, { shortPeriod = 50, longPeriod = 200
   const goldenCross = maShortPrev <= maLongPrev && maShortNow > maLongNow;
   const deathCross  = maShortPrev >= maLongPrev && maShortNow < maLongNow;
 
+  const gap    = Math.abs(maShortNow - maLongNow);
+  const gapPct = maLongNow > 0 ? (gap / maLongNow) * 100 : 999;
+  const approaching = !goldenCross && !deathCross && gapPct < 0.5;
+
   if (goldenCross) {
-    const stop = currentPrice * 0.95;
-    const tp   = currentPrice * 1.10;
-    return { signal: "buy", reason: `Golden Cross: MA${shortPeriod} crossed above MA${longPeriod} — major bullish signal`, suggestedEntry: currentPrice, suggestedStop: parseFloat(stop.toFixed(2)), suggestedTP: parseFloat(tp.toFixed(2)) };
+    return { signal: "buy", reason: `Golden Cross: MA${shortPeriod} crossed above MA${longPeriod} — major bullish`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: parseFloat((currentPrice * 0.95).toFixed(2)), suggestedTP: parseFloat((currentPrice * 1.10).toFixed(2)) };
   }
-
   if (deathCross) {
-    return { signal: "sell", reason: `Death Cross: MA${shortPeriod} crossed below MA${longPeriod} — major bearish signal`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+    return { signal: "sell", reason: `Death Cross: MA${shortPeriod} crossed below MA${longPeriod} — major bearish`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  }
+  if (approaching) {
+    const bullish = maShortNow < maLongNow;
+    return {
+      signal: "hold",
+      reason: `MA${shortPeriod}/MA${longPeriod} converging — gap ${gapPct.toFixed(2)}%`,
+      approaching: true,
+      approachingReason: `Gap ${gapPct.toFixed(2)}% — ${bullish ? "Golden Cross (BUY)" : "Death Cross (SELL)"} forming`,
+      approachingEta: "~hours to days",
+      suggestedEntry: currentPrice,
+      suggestedStop:  bullish ? parseFloat((currentPrice * 0.95).toFixed(2)) : null,
+      suggestedTP:    bullish ? parseFloat((currentPrice * 1.10).toFixed(2)) : null,
+    };
   }
 
-  const trend = maShortNow > maLongNow ? "bullish (MA50 above MA200)" : "bearish (MA50 below MA200)";
-  return { signal: "hold", reason: `Trend is ${trend} — waiting for cross`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  const trend = maShortNow > maLongNow ? "bullish" : "bearish";
+  return noSignal(`${trend} trend (gap ${gapPct.toFixed(2)}%) — waiting for cross`, currentPrice);
 }
 
 // ── Strategy 5: Support / Resistance Bounce ───────────────────────────────────
-// Buy near support levels. Sell near resistance levels.
 
 function supportBounce(candles, currentPrice, { lookback = 30, tolerancePct = 0.02 }) {
-  if (candles.length < lookback) {
-    return { signal: "hold", reason: `Need ${lookback} candles — only ${candles.length} available`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
-  }
+  if (candles.length < lookback) return noSignal(`Need ${lookback} candles — only ${candles.length} available`, currentPrice);
 
-  const recent    = candles.slice(-lookback);
-  const lows      = recent.map(c => c.low);
-  const highs     = recent.map(c => c.high);
-  const support   = Math.min(...lows);
-  const resistance= Math.max(...highs);
-  const tolerance = currentPrice * tolerancePct;
+  const recent      = candles.slice(-lookback);
+  const prevCandles = recent.slice(0, -1);
+  const support     = Math.min(...prevCandles.map(c => c.low));
+  const resistance  = Math.max(...prevCandles.map(c => c.high));
+  const tolerance   = currentPrice * tolerancePct;
 
   const nearSupport    = Math.abs(currentPrice - support)    <= tolerance;
   const nearResistance = Math.abs(currentPrice - resistance) <= tolerance;
+  const approachingSupport    = !nearSupport    && Math.abs(currentPrice - support)    <= currentPrice * 0.01;
+  const approachingResistance = !nearResistance && Math.abs(currentPrice - resistance) <= currentPrice * 0.01;
 
   if (nearSupport) {
-    const stop = support * (1 - tolerancePct); // just below support
-    const tp   = resistance;                    // aim for resistance
-    return { signal: "buy", reason: `Price near ${lookback}-bar support ฿${support.toFixed(2)} (within ${(tolerancePct*100)}%)`, suggestedEntry: currentPrice, suggestedStop: parseFloat(stop.toFixed(2)), suggestedTP: parseFloat(tp.toFixed(2)) };
+    return { signal: "buy", reason: `At ${lookback}-bar support ฿${support.toFixed(2)} — bounce entry`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: parseFloat((support * (1 - tolerancePct)).toFixed(2)), suggestedTP: parseFloat(resistance.toFixed(2)) };
   }
-
   if (nearResistance) {
-    return { signal: "sell", reason: `Price near ${lookback}-bar resistance ฿${resistance.toFixed(2)} (within ${(tolerancePct*100)}%) — consider taking profit`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+    return { signal: "sell", reason: `At ${lookback}-bar resistance ฿${resistance.toFixed(2)} — take profit`, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  }
+  if (approachingSupport) {
+    return { signal: "hold", reason: `Drifting toward support ฿${support.toFixed(2)} — within 1%`, approaching: true, approachingReason: `Approaching support ฿${support.toFixed(2)} — BUY zone near`, approachingEta: "~1–5 candles", suggestedEntry: support, suggestedStop: parseFloat((support * (1 - tolerancePct)).toFixed(2)), suggestedTP: parseFloat(resistance.toFixed(2)) };
+  }
+  if (approachingResistance) {
+    return { signal: "hold", reason: `Approaching resistance ฿${resistance.toFixed(2)} — within 1%`, approaching: true, approachingReason: `Approaching resistance ฿${resistance.toFixed(2)} — consider readying SELL`, approachingEta: "~1–5 candles", suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
   }
 
   const midpoint = (support + resistance) / 2;
-  const zone     = currentPrice < midpoint ? "lower half (closer to support)" : "upper half (closer to resistance)";
-  return { signal: "hold", reason: `Support: ฿${support.toFixed(2)} | Resistance: ฿${resistance.toFixed(2)} | Price in ${zone}`, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+  const zone = currentPrice < midpoint ? "lower half — nearer support" : "upper half — nearer resistance";
+  return noSignal(`S: ฿${support.toFixed(2)} | R: ฿${resistance.toFixed(2)} | ${zone}`, currentPrice);
 }
 
-// ── Math Helpers ──────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Simple moving average of last `period` values in `arr` */
+function noSignal(reason, currentPrice) {
+  return { signal: "hold", reason, approaching: false, approachingReason: null, approachingEta: null, suggestedEntry: currentPrice, suggestedStop: null, suggestedTP: null };
+}
+
 function sma(arr, period) {
   if (arr.length < period) return null;
-  const slice = arr.slice(-period);
-  return slice.reduce((s, v) => s + v, 0) / period;
+  return arr.slice(-period).reduce((s, v) => s + v, 0) / period;
 }
 
-/** Wilder's RSI */
 function calcRSI(closes, period) {
-  if (closes.length < period + 1) return 50; // fallback neutral
-
+  if (closes.length < period + 1) return 50;
   const changes = [];
-  for (let i = 1; i < closes.length; i++) {
-    changes.push(closes[i] - closes[i - 1]);
-  }
-
+  for (let i = 1; i < closes.length; i++) changes.push(closes[i] - closes[i - 1]);
   const initial = changes.slice(0, period);
   let avgGain = initial.filter(c => c > 0).reduce((s, c) => s + c, 0) / period;
   let avgLoss = initial.filter(c => c < 0).reduce((s, c) => s + Math.abs(c), 0) / period;
-
   for (let i = period; i < changes.length; i++) {
-    const change = changes[i];
-    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.abs(Math.min(change, 0))) / period;
+    const c = changes[i];
+    avgGain = (avgGain * (period - 1) + Math.max(c, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.abs(Math.min(c, 0))) / period;
   }
-
   if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
+  return 100 - (100 / (1 + avgGain / avgLoss));
 }
