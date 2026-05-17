@@ -1,18 +1,15 @@
 /**
  * SetMarket.jsx
  * SET/MAI market tab — Thai stocks.
- * Phase 2: watchlist of 8 stocks, live ticks + historical candles,
- * buy/sell, positions table.
- *
- * Timeframe fix: timeframe state lives here, passed to both
- * set-injector (re-fetches history) and ChartPanel (display + controls).
+ * Phase 3: StrategyPanel wired in — activeStrategy state lives here.
  *
  * ⚠️ Data is 15-min delayed via Yahoo Finance free tier.
  */
 
-import { useState } from "react";
-import ChartPanel   from "../components/ChartPanel.jsx";
-import OrderPanel   from "../components/OrderPanel.jsx";
+import { useState, useCallback } from "react";
+import ChartPanel    from "../components/ChartPanel.jsx";
+import OrderPanel    from "../components/OrderPanel.jsx";
+import StrategyPanel from "../components/StrategyPanel.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useSetMarket } from "../injectors/set-injector.js";
 import { calcPortfolioSummary, calcHourlyPnL } from "../core/portfolio-engine.js";
@@ -20,6 +17,20 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts
 import config from "../../config.js";
 
 const WATCHLIST = config.data.set.watchlistDefault;
+const WORKER    = config.workers.base;
+
+// Log a closed trade to D1 via Worker
+async function logTradeToD1(trade) {
+  try {
+    await fetch(`${WORKER}/api/trades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(trade),
+    });
+  } catch (e) {
+    console.warn("D1 trade log failed (non-critical):", e.message);
+  }
+}
 
 function WatchlistRow({ symbol, quote, isActive, onClick }) {
   const changeUp = (quote?.changePct || 0) >= 0;
@@ -46,8 +57,9 @@ function WatchlistRow({ symbol, quote, isActive, onClick }) {
 }
 
 export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIStrategy }) {
-  const [activeSymbol, setActiveSymbol] = useState(WATCHLIST[0]);
-  const [timeframe, setTimeframe]       = useState("1D");
+  const [activeSymbol,   setActiveSymbol]   = useState(WATCHLIST[0]);
+  const [timeframe,      setTimeframe]      = useState("1D");
+  const [activeStrategy, setActiveStrategy] = useState(null); // Phase 3
 
   const {
     watchlistData,
@@ -63,12 +75,11 @@ export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIS
   } = useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHours, timeframe });
 
   // Guards (L016)
-  const closedTrades  = Array.isArray(portfolio?.closedTrades) ? portfolio.closedTrades : [];
-  const positions     = Array.isArray(portfolio?.positions)    ? portfolio.positions    : [];
-  const summary       = calcPortfolioSummary(portfolio);
-  const hourlyPnL     = calcHourlyPnL(closedTrades.filter(t => t.market === "set"));
-  const setPositions  = positions.filter(p => p.market === "set");
-  const currentPrice  = activeQuote?.price || null;
+  const closedTrades = Array.isArray(portfolio?.closedTrades) ? portfolio.closedTrades : [];
+  const positions    = Array.isArray(portfolio?.positions)    ? portfolio.positions    : [];
+  const hourlyPnL    = calcHourlyPnL(closedTrades.filter(t => t.market === "set"));
+  const setPositions = positions.filter(p => p.market === "set");
+  const currentPrice = activeQuote?.price || null;
 
   const fetchIntel = async (symbol, date) => ({
     factors:   ["Intel not available for SET in Phase 2 — coming in Phase 4"],
@@ -79,7 +90,50 @@ export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIS
   const handleSymbolChange = (sym) => {
     setActiveSymbol(sym);
     setTimeframe("1D"); // reset to 1D when switching stocks
+    setActiveStrategy(null); // reset strategy when switching symbol
   };
+
+  // Strategy → BUY
+  const handleStrategyBuy = useCallback(async (order) => {
+    const result = await handleBuy(order);
+    if (result?.trade) {
+      logTradeToD1({
+        id:          result.trade.id,
+        symbol:      order.symbol,
+        market:      "set",
+        side:        "buy",
+        qty:         order.qty,
+        entry_price: order.price,
+        exit_price:  null,
+        pnl:         null,
+        strategy:    order.strategy || activeStrategy,
+        opened_at:   new Date().toISOString(),
+        closed_at:   null,
+        sim_mode:    1,
+      });
+    }
+  }, [handleBuy, activeStrategy]);
+
+  // Strategy → SELL
+  const handleStrategySell = useCallback(async (positionId, price) => {
+    const result = await handleSell(positionId, price);
+    if (result?.trade) {
+      logTradeToD1({
+        id:          result.trade.id,
+        symbol:      result.trade.symbol,
+        market:      "set",
+        side:        "sell",
+        qty:         result.trade.qty,
+        entry_price: result.trade.entryPrice,
+        exit_price:  price,
+        pnl:         result.trade.pnl,
+        strategy:    result.trade.strategy || activeStrategy,
+        opened_at:   result.trade.openedAt,
+        closed_at:   new Date().toISOString(),
+        sim_mode:    1,
+      });
+    }
+  }, [handleSell, activeStrategy]);
 
   return (
     <div className="market-page set-market">
@@ -184,7 +238,7 @@ export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIS
           )}
         </div>
 
-        {/* Order Panel */}
+        {/* Order Panel + Strategy Panel */}
         <div className="order-section">
           <OrderPanel
             market="set"
@@ -195,6 +249,19 @@ export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIS
             marketOpen={marketOpen}
             enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
+          />
+
+          {/* Phase 3: Strategy Panel below Order Panel */}
+          <StrategyPanel
+            market="set"
+            symbol={activeSymbol}
+            priceHistory={priceHistory}
+            currentPrice={currentPrice}
+            portfolio={portfolio}
+            activeStrategy={activeStrategy}
+            onStrategyChange={setActiveStrategy}
+            onExecuteBuy={handleStrategyBuy}
+            onExecuteSell={handleStrategySell}
           />
         </div>
       </div>
@@ -211,7 +278,8 @@ export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIS
           <div className="positions-table">
             <div className="pos-row header">
               <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
-              <span>P&L</span><span>P&L %</span><span>Stop</span><span>Target</span><span>Action</span>
+              <span>P&L</span><span>P&L %</span><span>Stop</span><span>Target</span>
+              <span>Strategy</span><span>Action</span>
             </div>
             {setPositions.map(pos => {
               const pnlUp = pos.unrealisedPnL >= 0;
@@ -229,6 +297,7 @@ export default function SetMarket({ portfolio, setPortfolio, enforceHours, onAIS
                   </span>
                   <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
                   <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                  <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
                   <span>
                     <Tooltip content="Close this position at current market price.">
                       <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>Close</button>

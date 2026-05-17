@@ -1,20 +1,38 @@
 /**
  * GoldMarket.jsx
  * Gold market tab — Thai gold (baht-weight) + XAUUSD display.
- * Wires together: chart, order panel, positions list, price ticker.
+ * Phase 3: StrategyPanel wired in — activeStrategy state lives here.
  */
 
-import { useState } from "react";
-import ChartPanel from "../components/ChartPanel.jsx";
-import OrderPanel from "../components/OrderPanel.jsx";
+import { useState, useCallback } from "react";
+import ChartPanel    from "../components/ChartPanel.jsx";
+import OrderPanel    from "../components/OrderPanel.jsx";
+import StrategyPanel from "../components/StrategyPanel.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useGoldMarket } from "../injectors/gold-injector.js";
 import { calcPortfolioSummary, calcHourlyPnL } from "../core/portfolio-engine.js";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
+import config from "../../config.js";
+
+const WORKER = config.workers.base;
+
+// Log a closed trade to D1 via Worker
+async function logTradeToD1(trade) {
+  try {
+    await fetch(`${WORKER}/api/trades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(trade),
+    });
+  } catch (e) {
+    console.warn("D1 trade log failed (non-critical):", e.message);
+  }
+}
 
 export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAIStrategy }) {
-  const [activeSymbol, setActiveSymbol] = useState("THAI_GOLD_BAHT");
-  const [timeframe, setTimeframe]       = useState("1D");
+  const [activeSymbol,   setActiveSymbol]   = useState("THAI_GOLD_BAHT");
+  const [timeframe,      setTimeframe]      = useState("1D");
+  const [activeStrategy, setActiveStrategy] = useState(null); // Phase 3
 
   const {
     goldData,
@@ -30,7 +48,7 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
     fetchIntel,
   } = useGoldMarket({ portfolio, setPortfolio, enforceHours, timeframe });
 
-  const summary = calcPortfolioSummary(portfolio);
+  const summary       = calcPortfolioSummary(portfolio);
   const closedTrades  = Array.isArray(portfolio?.closedTrades) ? portfolio.closedTrades : [];
   const positions     = Array.isArray(portfolio?.positions)    ? portfolio.positions    : [];
   const hourlyPnL     = calcHourlyPnL(closedTrades.filter(t => t.market === "gold"));
@@ -42,6 +60,49 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
 
   const priceCurrency = activeSymbol === "THAI_GOLD_BAHT" ? "THB" : "USD";
   const priceUnit     = activeSymbol === "THAI_GOLD_BAHT" ? "/ baht-weight" : "/ troy oz";
+
+  // Strategy → BUY: wrap handleBuy and also log to D1 when it closes
+  const handleStrategyBuy = useCallback(async (order) => {
+    const result = await handleBuy(order);
+    if (result?.trade) {
+      // Log the open leg — closed_at and pnl filled later on close
+      logTradeToD1({
+        id:          result.trade.id,
+        symbol:      order.symbol,
+        market:      "gold",
+        side:        "buy",
+        qty:         order.qty,
+        entry_price: order.price,
+        exit_price:  null,
+        pnl:         null,
+        strategy:    order.strategy || activeStrategy,
+        opened_at:   new Date().toISOString(),
+        closed_at:   null,
+        sim_mode:    1,
+      });
+    }
+  }, [handleBuy, activeStrategy]);
+
+  // Strategy → SELL: wrap handleSell and log the close to D1
+  const handleStrategySell = useCallback(async (positionId, price) => {
+    const result = await handleSell(positionId, price);
+    if (result?.trade) {
+      logTradeToD1({
+        id:          result.trade.id,
+        symbol:      result.trade.symbol,
+        market:      "gold",
+        side:        "sell",
+        qty:         result.trade.qty,
+        entry_price: result.trade.entryPrice,
+        exit_price:  price,
+        pnl:         result.trade.pnl,
+        strategy:    result.trade.strategy || activeStrategy,
+        opened_at:   result.trade.openedAt,
+        closed_at:   new Date().toISOString(),
+        sim_mode:    1,
+      });
+    }
+  }, [handleSell, activeStrategy]);
 
   return (
     <div className="market-page gold-market">
@@ -135,7 +196,7 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
           )}
         </div>
 
-        {/* Right: Order Panel */}
+        {/* Right: Order Panel + Strategy Panel */}
         <div className="order-section">
           <OrderPanel
             market="gold"
@@ -146,6 +207,19 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
             marketOpen={marketOpen}
             enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
+          />
+
+          {/* Phase 3: Strategy Panel below Order Panel */}
+          <StrategyPanel
+            market="gold"
+            symbol={activeSymbol}
+            priceHistory={priceHistory}
+            currentPrice={currentPrice}
+            portfolio={portfolio}
+            activeStrategy={activeStrategy}
+            onStrategyChange={setActiveStrategy}
+            onExecuteBuy={handleStrategyBuy}
+            onExecuteSell={handleStrategySell}
           />
         </div>
       </div>
@@ -170,6 +244,7 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
               <span>P&L %</span>
               <span>Stop</span>
               <span>Target</span>
+              <span>Strategy</span>
               <span>Action</span>
             </div>
             {goldPositions.map(pos => {
@@ -186,8 +261,9 @@ export default function GoldMarket({ portfolio, setPortfolio, enforceHours, onAI
                   <span className={pnlUp ? "pnl-up" : "pnl-down"}>
                     {pnlUp ? "+" : ""}{pos.unrealisedPnLPct?.toFixed(2)}%
                   </span>
-                  <span className="pos-stop">{pos.stopLoss ? `฿${pos.stopLoss}` : "—"}</span>
-                  <span className="pos-tp">{pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                  <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
+                  <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                  <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
                   <span>
                     <Tooltip content="Close this position at the current market price and realise your profit or loss.">
                       <button
