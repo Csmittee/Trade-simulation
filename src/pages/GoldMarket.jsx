@@ -48,6 +48,7 @@ export default function GoldMarket({
   const [activeSymbol,    setActiveSymbol]    = useState("THAI_GOLD_BAHT");
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
+  const [orderMode,       setOrderMode]       = useState("manual"); // "manual" | "ai"
 
   const {
     goldData, priceHistory, loading, error, partial,
@@ -331,20 +332,25 @@ export default function GoldMarket({
             marketOpen={marketOpen}
             enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
+            orderMode={orderMode}
+            onOrderModeChange={setOrderMode}
           />
 
-          <StrategyPanel
-            market="gold"
-            symbol={activeSymbol}
-            priceHistory={priceHistory}
-            currentPrice={currentPrice}
-            portfolio={portfolio}
-            activeStrategy={activeStrategy}
-            onStrategyChange={onStrategyChange}
-            onExecuteBuy={handleStrategyBuy}
-            onExecuteSell={handleStrategySell}
-            onStrategyEvent={handleStrategyEvent}
-          />
+          {/* StrategyPanel only shows when Manual tab is active */}
+          {orderMode === "manual" && (
+            <StrategyPanel
+              market="gold"
+              symbol={activeSymbol}
+              priceHistory={priceHistory}
+              currentPrice={currentPrice}
+              portfolio={portfolio}
+              activeStrategy={activeStrategy}
+              onStrategyChange={onStrategyChange}
+              onExecuteBuy={handleStrategyBuy}
+              onExecuteSell={handleStrategySell}
+              onStrategyEvent={handleStrategyEvent}
+            />
+          )}
         </div>
       </div>
     </div>

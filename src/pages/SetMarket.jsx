@@ -73,6 +73,7 @@ export default function SetMarket({
   const [activeSymbol,    setActiveSymbol]    = useState(WATCHLIST[0]);
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
+  const [orderMode,       setOrderMode]       = useState("manual"); // "manual" | "ai"
 
   const {
     watchlistData, activeQuote, priceHistory, historyLoading,
@@ -379,20 +380,25 @@ export default function SetMarket({
             marketOpen={marketOpen}
             enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
+            orderMode={orderMode}
+            onOrderModeChange={setOrderMode}
           />
 
-          <StrategyPanel
-            market="set"
-            symbol={activeSymbol}
-            priceHistory={priceHistory}
-            currentPrice={currentPrice}
-            portfolio={portfolio}
-            activeStrategy={activeStrategy}
-            onStrategyChange={onStrategyChange}
-            onExecuteBuy={handleStrategyBuy}
-            onExecuteSell={handleStrategySell}
-            onStrategyEvent={handleStrategyEvent}
-          />
+          {/* StrategyPanel only shows when Manual tab is active */}
+          {orderMode === "manual" && (
+            <StrategyPanel
+              market="set"
+              symbol={activeSymbol}
+              priceHistory={priceHistory}
+              currentPrice={currentPrice}
+              portfolio={portfolio}
+              activeStrategy={activeStrategy}
+              onStrategyChange={onStrategyChange}
+              onExecuteBuy={handleStrategyBuy}
+              onExecuteSell={handleStrategySell}
+              onStrategyEvent={handleStrategyEvent}
+            />
+          )}
         </div>
       </div>
     </div>
