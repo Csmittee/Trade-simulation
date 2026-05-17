@@ -752,3 +752,170 @@ a { color: var(--gold); }
   white-space: nowrap;
 }
 
+/* ── Phase 3 Patch — append these to the bottom of dashboard.css ── */
+
+/* ── Tactic Card ──────────────────────────────────────────────────────────── */
+.tactic-card {
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.tactic-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 10px;
+  background: var(--gold-dim);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  user-select: none;
+}
+.tactic-header:hover { background: rgba(245,158,11,0.2); }
+.tactic-toggle { font-size: 10px; color: var(--text-muted); }
+
+.tactic-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-raised);
+}
+
+.tactic-rule {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.tactic-icon { flex-shrink: 0; width: 16px; }
+.tactic-text { color: var(--text-secondary); }
+
+/* ── Auto Execute Toggle ─────────────────────────────────────────────────── */
+.auto-execute-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.auto-execute-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.auto-toggle-btn {
+  padding: 3px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border: 1px solid;
+  transition: all 0.15s;
+}
+.auto-toggle-btn.on  { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+.auto-toggle-btn.off { background: var(--bg-raised);  border-color: var(--border); color: var(--text-muted); }
+
+/* ── Armed Badge in Header ───────────────────────────────────────────────── */
+.armed-badge {
+  margin-left: 8px;
+  padding: 2px 7px;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  border-radius: 20px;
+  font-size: 10px;
+  color: var(--green);
+  font-weight: 700;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* ── Approaching Alert ───────────────────────────────────────────────────── */
+.approaching-alert {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: fadeIn 0.3s ease;
+}
+
+.approaching-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold-light);
+}
+
+.approaching-eta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.arm-btn {
+  padding: 6px 10px;
+  background: var(--gold);
+  color: #000;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.arm-btn:hover { opacity: 0.85; }
+
+.armed-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 700;
+}
+
+.disarm-btn {
+  padding: 3px 8px;
+  font-size: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.disarm-btn:hover { border-color: var(--red); color: var(--red); }
+
+/* ── AI Phase 4 placeholder ──────────────────────────────────────────────── */
+.ai-phase4-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  background: var(--gold-dim);
+  border: 1px solid var(--gold);
+  border-radius: 20px;
+  font-size: 10px;
+  color: var(--gold);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.ai-phase4-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
