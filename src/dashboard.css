@@ -45,11 +45,8 @@
   --ticker-h:       72px;
   --chrome-h:       calc(var(--header-h) + var(--tabnav-h) + var(--ticker-h) + 1px);
 
-  /* Panel 3 height — bottom strip */
-  --panel3-h:       260px;
-
-  /* Panel 1+2 height — fills remaining viewport */
-  --panel12-h:      calc(100vh - var(--header-h) - var(--tabnav-h) - var(--ticker-h) - var(--panel3-h) - 40px);
+  /* Right panel width */
+  --right-panel-w:  340px;
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────────── */
@@ -228,23 +225,39 @@ a { color: var(--gold); }
 .meta-item   { font-size: 11px; color: var(--text-secondary); }
 .meta-item strong { color: var(--text-primary); }
 
-/* ── 3-Panel Main Body ──────────────────────────────────────────────────────── */
-/* Panel 1 + Panel 2 sit side-by-side in market-body */
+/* ── Layout: Left column (chart + bottom) | Right column (controls) ────────── */
+/*
+ * market-body = 2 columns:
+ *   Left  (flex: 1)              — chart on top, positions+log stacked below
+ *   Right (var(--right-panel-w)) — order + strategy panel, full height scroll
+ *
+ * SET market adds a watchlist column on the far left.
+ *
+ * The left column is itself a flex column so the chart occupies ~65%
+ * and panel-bottom grows naturally below it — NO fixed heights.
+ */
 .market-body {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr var(--right-panel-w);
   gap: 0;
   flex: 1;
-  min-height: 0; /* CRITICAL: allows grid children to shrink */
-  border-bottom: 1px solid var(--border);
+  min-height: 0;
 }
 
-/* SET market has watchlist column */
 .set-market .market-body {
-  grid-template-columns: 200px 1fr 320px;
+  grid-template-columns: 180px 1fr var(--right-panel-w);
 }
 
-/* ── Panel 1 — Chart (left, scrollable) ─────────────────────────────────────── */
+/* ── Left column wrapper — chart above, bottom below ───────────────────────── */
+.panel-left {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+/* ── Chart area — scrollable, takes available space ─────────────────────────── */
 .panel-chart {
   overflow-y: auto;
   overflow-x: hidden;
@@ -252,10 +265,74 @@ a { color: var(--gold); }
   flex-direction: column;
   gap: 16px;
   padding: 16px;
-  border-right: 1px solid var(--border);
+  flex: 1;          /* grows to fill space above panel-bottom */
+  min-height: 0;
 }
 
-/* ── Panel 2 — Strategy + Order (right, scrollable) ─────────────────────────── */
+/* ── Panel Bottom — stacked below chart, no fixed height ─────────────────────── */
+/*
+ * Positions table + Activity log stack vertically here.
+ * Height is determined by content. Max-height caps it so chart
+ * always gets reasonable space even with many positions.
+ */
+.panel-bottom {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-top: 2px solid var(--border);
+  max-height: 40vh;   /* never eat more than 40% of viewport */
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+  background: var(--bg-base);
+}
+
+.panel-bottom.collapsed {
+  max-height: 36px;
+}
+
+/* Panel 3 header bar — always visible, collapse toggle */
+.panel3-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-shrink: 0;
+  gap: 16px;
+}
+
+.panel3-title {
+  font-size: 11px; font-weight: 700;
+  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px;
+}
+
+.panel3-collapse-btn {
+  font-size: 10px; color: var(--text-muted); background: none; border: none;
+  cursor: pointer; padding: 2px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.panel3-collapse-btn:hover { color: var(--gold); border-color: var(--gold); }
+
+/* Scrollable area inside panel-bottom */
+.panel-bottom-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  padding: 8px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Right column — Order + Strategy, full height scroll ────────────────────── */
 .panel-controls {
   overflow-y: auto;
   overflow-x: hidden;
@@ -264,95 +341,28 @@ a { color: var(--gold); }
   gap: 0;
   padding: 16px;
   background: var(--bg-surface);
+  min-height: 0;
 }
 
-/* ── Panel 2 — Watchlist (SET only, leftmost) ─────────────────────────────── */
+/* ── Watchlist (SET only, leftmost column) ──────────────────────────────────── */
 .panel-watchlist {
   overflow-y: auto;
   overflow-x: hidden;
   border-right: 1px solid var(--border);
   padding: 12px;
   background: var(--bg-surface);
+  min-height: 0;
 }
 
-/* ── Panel 3 — Bottom Strip (positions + activity log) ───────────────────────── */
-.panel-bottom {
-  height: var(--panel3-h);
-  min-height: var(--panel3-h);
-  max-height: var(--panel3-h);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  transition: height 0.2s ease;
-}
-
-/* collapsed state — panel 3 toggle */
-.panel-bottom.collapsed {
-  height: 36px;
-  min-height: 36px;
-  max-height: 36px;
-  overflow: hidden;
-}
-
-/* Each half of panel 3 scrolls independently */
-.panel-bottom-half {
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.panel-bottom-half:first-child {
-  border-right: 1px solid var(--border);
-}
-
-/* Panel 3 header bar — always visible, used for collapse toggle */
-.panel3-header {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  height: 36px;
-  min-height: 36px;
+/* ── Activity log section divider inside panel-bottom ───────────────────────── */
+.panel-bottom-section-title {
+  font-size: 11px; font-weight: 700; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 1px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 0 8px 0;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-surface);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  flex-shrink: 0;
+  margin-bottom: 8px;
 }
-.panel3-tab {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 16px; font-size: 11px; font-weight: 700;
-  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px;
-  background: none; border: none;
-}
-.panel3-tab:first-child { border-right: 1px solid var(--border); }
-.panel3-collapse-btn {
-  font-size: 10px; color: var(--text-muted); background: none; border: none;
-  cursor: pointer; padding: 2px 6px;
-}
-.panel3-collapse-btn:hover { color: var(--gold); }
-
-/* Content inside panel 3 halves */
-.panel-bottom-content {
-  flex: 1;
-  padding: 8px 16px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-/* ── Panel collapse toggle button (for panels 1/2) ──────────────────────────── */
-.panel-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 0 12px 0; flex-shrink: 0;
-}
-.panel-collapse {
-  font-size: 10px; color: var(--text-muted);
-  background: none; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 2px 8px; cursor: pointer;
-}
-.panel-collapse:hover { color: var(--gold); border-color: var(--gold); }
 
 /* ── Chart Section (inside Panel 1) ─────────────────────────────────────────── */
 .chart-panel {
@@ -530,10 +540,9 @@ a { color: var(--gold); }
   font-size: 11px; font-weight: 700; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 1px;
   display: flex; align-items: center; gap: 8px;
-  padding: 10px 0 8px;
-  position: sticky; top: 36px; /* below panel3-header */
-  background: var(--bg-base); /* match parent bg so it covers content behind */
-  z-index: 5;
+  padding: 0 0 10px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
 }
 .empty-state { text-align: center; color: var(--text-muted); padding: 20px; font-size: 12px; }
 .positions-table { display: flex; flex-direction: column; gap: 0; }
