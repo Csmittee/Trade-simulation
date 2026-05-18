@@ -126,6 +126,91 @@ export function executeSell(portfolio, positionId, currentPrice) {
   return { portfolio: updatedPortfolio, trade: closedTrade, error: null };
 }
 
+/**
+ * Execute a SELL by quantity using FIFO across multiple lots.
+ * Closes oldest positions first until qtyToSell is filled.
+ * Returns { portfolio, closedTrades, totalPnl, avgEntryPrice, error }
+ * @param {object} portfolio   - current portfolio state
+ * @param {string} market      - "gold" | "set"
+ * @param {string} symbol      - e.g. "THAI_GOLD_BAHT"
+ * @param {number} qtyToSell   - how many units to sell
+ * @param {number} currentPrice - current market price
+ */
+export function executeSellQty(portfolio, market, symbol, qtyToSell, currentPrice) {
+  if (!qtyToSell || qtyToSell <= 0) return { error: "Sell quantity must be greater than zero" };
+  if (!currentPrice || currentPrice <= 0) return { error: "Invalid price" };
+
+  // Get all matching positions sorted FIFO (oldest first by openedAt)
+  const matching = portfolio.positions
+    .filter(p => p.market === market && p.symbol === symbol)
+    .sort((a, b) => new Date(a.openedAt) - new Date(b.openedAt));
+
+  const totalHeld = matching.reduce((s, p) => s + p.qty, 0);
+  if (totalHeld === 0) return { error: "No open positions to sell" };
+  if (qtyToSell > totalHeld) return { error: `Cannot sell ${qtyToSell} — only ${totalHeld} held` };
+
+  let remaining = qtyToSell;
+  let totalProceeds = 0;
+  let totalCostBasis = 0;
+  const closedTrades = [];
+  let updatedPositions = [...portfolio.positions];
+
+  for (const pos of matching) {
+    if (remaining <= 0) break;
+
+    const sellQty = Math.min(remaining, pos.qty);
+    const costBasis = (sellQty / pos.qty) * pos.totalCost;
+    const proceeds  = calculateProceeds(sellQty, currentPrice, market);
+    const pnl       = proceeds - costBasis;
+    const pnlPct    = (pnl / costBasis) * 100;
+
+    totalProceeds  += proceeds;
+    totalCostBasis += costBasis;
+
+    const closedTrade = {
+      ...pos,
+      id:         generateTradeId(),
+      qty:        sellQty,
+      totalCost:  costBasis,
+      exitPrice:  currentPrice,
+      proceeds,
+      pnl,
+      pnlPct,
+      closedAt:   new Date().toISOString(),
+      status:     "closed",
+    };
+    closedTrades.push(closedTrade);
+
+    const posIdx = updatedPositions.findIndex(p => p.id === pos.id);
+    if (sellQty >= pos.qty) {
+      // Full close — remove this lot
+      updatedPositions = updatedPositions.filter(p => p.id !== pos.id);
+    } else {
+      // Partial close — reduce qty and totalCost of this lot
+      updatedPositions[posIdx] = {
+        ...updatedPositions[posIdx],
+        qty:       pos.qty - sellQty,
+        totalCost: pos.totalCost - costBasis,
+      };
+    }
+
+    remaining -= sellQty;
+  }
+
+  const totalPnl      = totalProceeds - totalCostBasis;
+  const avgEntryPrice = totalCostBasis / qtyToSell;
+
+  const updatedPortfolio = {
+    ...portfolio,
+    balance:      portfolio.balance + totalProceeds,
+    positions:    updatedPositions,
+    closedTrades: [...portfolio.closedTrades, ...closedTrades],
+    lastUpdatedAt: new Date().toISOString(),
+  };
+
+  return { portfolio: updatedPortfolio, closedTrades, totalPnl, avgEntryPrice, error: null };
+}
+
 // ── Price Updates ─────────────────────────────────────────────────────────────
 
 /**
@@ -294,6 +379,46 @@ export function getRiskLabel(tradeCost, portfolioBalance) {
   if (pct <= config.ui.riskLevels.low.maxPortfolioPct)    return "low";
   if (pct <= config.ui.riskLevels.medium.maxPortfolioPct) return "medium";
   return "high";
+}
+
+/**
+ * Get default stop loss and take profit prices for a given risk level and entry price.
+ * low:    SL -1%,   TP +1.5%
+ * medium: SL -2%,   TP +3%
+ * high:   SL -3.5%, TP +5%
+ */
+export function getRiskDefaults(entryPrice, riskLevel) {
+  const map = {
+    low:    { slPct: 0.01,  tpPct: 0.015 },
+    medium: { slPct: 0.02,  tpPct: 0.03  },
+    high:   { slPct: 0.035, tpPct: 0.05  },
+  };
+  const { slPct, tpPct } = map[riskLevel] || map.medium;
+  return {
+    stopLoss:   Math.round(entryPrice * (1 - slPct)),
+    takeProfit: Math.round(entryPrice * (1 + tpPct)),
+  };
+}
+
+/**
+ * Infer risk level from custom SL/TP values relative to entry.
+ * Returns "low" | "medium" | "high"
+ */
+export function inferRiskFromSLTP(entryPrice, stopLoss, takeProfit) {
+  if (!entryPrice) return "medium";
+  if (stopLoss && stopLoss < entryPrice) {
+    const slPct = (entryPrice - stopLoss) / entryPrice;
+    if (slPct <= 0.015) return "low";
+    if (slPct <= 0.028) return "medium";
+    return "high";
+  }
+  if (takeProfit && takeProfit > entryPrice) {
+    const tpPct = (takeProfit - entryPrice) / entryPrice;
+    if (tpPct <= 0.02)  return "low";
+    if (tpPct <= 0.04)  return "medium";
+    return "high";
+  }
+  return "medium";
 }
 
 // ── Market Hours ──────────────────────────────────────────────────────────────
