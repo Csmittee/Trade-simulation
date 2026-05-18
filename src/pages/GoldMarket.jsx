@@ -43,6 +43,8 @@ export default function GoldMarket({
   onAIStrategy,
   activeStrategy,
   onStrategyChange,
+  autoExecute,
+  onAutoExecuteChange,
   activityEvents,
   onActivityEvent,
 }) {
