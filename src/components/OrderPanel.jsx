@@ -105,15 +105,20 @@ export default function OrderPanel({
     setError(null); setWarning(null);
     if (!qty || !price) { setError("Please enter quantity and price."); return; }
     if (!canTrade) { setError(closedHint); return; }
-    if (side === "buy") {
+   if (side === "buy") {
       const sym = market === "gold" ? "THAI_GOLD_BAHT" : (selectedSymbol || "SELECTED_STOCK");
-      const result = onBuy({ symbol: sym, market, qty: parseFloat(qty), price: parseFloat(price), stopLoss: parseFloat(stopLoss) || null, takeProfit: parseFloat(takeProfit) || null, strategy: "manual", simMode });
+      const p   = parseFloat(price);
+      const q   = parseFloat(qty);
+      const result = onBuy({ symbol: sym, market, qty: q, price: p, stopLoss: parseFloat(stopLoss) || null, takeProfit: parseFloat(takeProfit) || null, strategy: "manual", simMode });
       if (result?.error) { setError(`Order rejected: ${result.error}`); return; }
       if (result?.warning) setWarning(result.warning);
+      onLogActivity?.({ type: "buy", market, symbol: sym, price: p, detail: `Manual buy × ${q} @ ฿${p?.toLocaleString()}` });
       setQty(""); setStopLoss(""); setTakeProfit("");
     } else {
-      const result = onSell(null, parseFloat(price));
-      if (result?.error) setError(result.error);
+      const p = parseFloat(price);
+      const result = onSell(null, p);
+      if (result?.error) { setError(result.error); return; }
+      onLogActivity?.({ type: "sell", market, symbol: selectedSymbol || market, price: p, detail: `Manual sell @ ฿${p?.toLocaleString()}` });
     }
   }
 
