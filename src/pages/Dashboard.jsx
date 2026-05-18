@@ -1,18 +1,17 @@
 /**
  * Dashboard.jsx
- * Phase 5 — Session persistence: strategy state, autoExecute, workflow,
- *            all survive tab switch, Ctrl+Shift+R, browser swap.
- * Only a manual Reset button wipe clears the state.
+ * Phase 5 — Session persistence + KV operation optimization
  *
  * Changes from Phase 4:
  * - autoExecute lifted here from StrategyPanel (was local state)
- * - All strategy + workflow state persisted to KV on every change
- * - KV restore on load covers: activeStrategy, autoExecute, workflow,
- *   stageStatuses, activeStageIdx, consecutiveRed, workflowDone,
- *   fallbackTriggered, stagePnl
- * - handleActivityEvent now also writes to D1 via /api/logs
+ * - All 9 strategy/workflow KV keys bundled into ONE key (settings:strategyBundle)
+ *   → Load: 11 reads → 3 reads per session start
+ *   → Write: 9 separate writes → 1 write per any strategy state change
+ * - KV restore on load covers: activeStrategy, autoExecute, workflow, all stage state
+ * - handleActivityEvent writes to D1 via /api/logs
  * - activityEvents loaded from D1 on mount (last 12 hrs)
- * - loadMoreLogs() fetches 12 hrs further back per call
+ * - handleLoadMoreLogs: fetches 12 hrs further back per call
+ * - Only Reset button clears everything — tab switch / Ctrl+R / browser swap safe
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -27,6 +26,9 @@ const WORKER_BASE      = config.workers.base;
 const WORKER_PORTFOLIO = WORKER_BASE + config.workers.routes.portfolio;
 const WORKER_SETTINGS  = WORKER_BASE + config.workers.routes.settings;
 const WORKER_LOGS      = WORKER_BASE + config.workers.routes.logs;
+
+const BUNDLE_KEY = "settings:strategyBundle";
+const HOURS_KEY  = "settings:enforce_hours";
 
 // ── KV helpers ────────────────────────────────────────────────────────────────
 async function kvGetPortfolio() {
@@ -73,12 +75,12 @@ async function d1PostLog(event) {
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({
         id:        event.id,
-        type:      event.type      || "info",
-        market:    event.market    || "system",
-        message:   event.message   || event.text || "",
-        detail:    event.detail    || "",
-        pnl:       event.pnl       ?? null,
-        strategy:  event.strategy  || null,
+        type:      event.type     || "info",
+        market:    event.market   || "system",
+        message:   event.message  || event.text || "",
+        detail:    event.detail   || "",
+        pnl:       event.pnl      ?? null,
+        strategy:  event.strategy || null,
         logged_at: event.time instanceof Date
           ? event.time.toISOString()
           : new Date().toISOString(),
@@ -180,18 +182,16 @@ const TABS = [
   { key: "portfolio", label: "Portfolio", icon: "💼" },
 ];
 
-// KV keys for strategy persistence
-const KV = {
-  STRATEGY:        "settings:activeStrategy",
-  AUTO_EXECUTE:    "settings:autoExecute",
-  WORKFLOW:        "settings:workflow",
-  STAGE_STATUSES:  "settings:workflowStages",
-  STAGE_IDX:       "settings:workflowStageIdx",
-  CONSEC_RED:      "settings:consecutiveRed",
-  WORKFLOW_DONE:   "settings:workflowDone",
-  FALLBACK:        "settings:fallbackTriggered",
-  STAGE_PNL:       "settings:stagePnl",
-  ENFORCE_HOURS:   "settings:enforce_hours",
+const EMPTY_BUNDLE = {
+  activeStrategy:    "off",
+  autoExecute:       false,
+  workflow:          null,
+  stageStatuses:     [],
+  activeStageIdx:    0,
+  consecutiveRed:    0,
+  workflowDone:      false,
+  fallbackTriggered: false,
+  stagePnl:          [],
 };
 
 export default function Dashboard() {
@@ -201,7 +201,7 @@ export default function Dashboard() {
   const [showReset,     setShowReset]     = useState(false);
   const [bootstrapped,  setBootstrapped]  = useState(false);
 
-  // ── Strategy state (lifted from StrategyPanel — BUG001 + Phase 5) ──────────
+  // ── Strategy state (lifted from StrategyPanel — Phase 5) ─────────────────
   const [activeStrategy, setActiveStrategy] = useState("off");
   const [autoExecute,    setAutoExecute]    = useState(false);
 
@@ -218,42 +218,21 @@ export default function Dashboard() {
   const aiWorkflowActive = !!workflow && !workflowDone;
 
   // ── Activity log ──────────────────────────────────────────────────────────
-  const [activityEvents,   setActivityEvents]   = useState([]);
-  const [logOldestTs,      setLogOldestTs]       = useState(null);  // cursor for load-more
-  const [logLoading,       setLogLoading]        = useState(false);
-  const [logHasMore,       setLogHasMore]        = useState(true);
+  const [activityEvents, setActivityEvents] = useState([]);
+  const [logOldestTs,    setLogOldestTs]    = useState(null);
+  const [logLoading,     setLogLoading]     = useState(false);
+  const [logHasMore,     setLogHasMore]     = useState(true);
 
-  // Prevent double-persist during bootstrapping
+  // Prevents persist effects from firing before bootstrap completes
   const bootstrappedRef = useRef(false);
 
-  // ── Load ALL state from KV on mount ──────────────────────────────────────
+  // ── Load all state from KV on mount (3 reads total) ───────────────────────
   useEffect(() => {
     async function load() {
-      // Load in parallel — portfolio + all settings
-      const [
-        savedPortfolio,
-        savedHours,
-        savedStrategy,
-        savedAutoExec,
-        savedWorkflow,
-        savedStages,
-        savedStageIdx,
-        savedConsecRed,
-        savedWorkflowDone,
-        savedFallback,
-        savedStagePnl,
-      ] = await Promise.all([
+      const [savedPortfolio, savedHours, savedBundle] = await Promise.all([
         kvGetPortfolio(),
-        kvGetSetting(KV.ENFORCE_HOURS),
-        kvGetSetting(KV.STRATEGY),
-        kvGetSetting(KV.AUTO_EXECUTE),
-        kvGetSetting(KV.WORKFLOW),
-        kvGetSetting(KV.STAGE_STATUSES),
-        kvGetSetting(KV.STAGE_IDX),
-        kvGetSetting(KV.CONSEC_RED),
-        kvGetSetting(KV.WORKFLOW_DONE),
-        kvGetSetting(KV.FALLBACK),
-        kvGetSetting(KV.STAGE_PNL),
+        kvGetSetting(HOURS_KEY),
+        kvGetSetting(BUNDLE_KEY),
       ]);
 
       // Portfolio
@@ -266,42 +245,23 @@ export default function Dashboard() {
         setEnforceHours(savedHours === "true" || savedHours === true);
       }
 
-      // Strategy
-      if (savedStrategy && savedStrategy !== "null") {
-        setActiveStrategy(savedStrategy);
+      // Strategy bundle (all 9 fields in one JSON blob)
+      if (savedBundle && savedBundle !== "null") {
+        try {
+          const b = JSON.parse(savedBundle);
+          if (b.activeStrategy !== undefined)    setActiveStrategy(b.activeStrategy);
+          if (b.autoExecute !== undefined)        setAutoExecute(Boolean(b.autoExecute));
+          if (b.workflow)                         setWorkflow(b.workflow);
+          if (Array.isArray(b.stageStatuses))     setStageStatuses(b.stageStatuses);
+          if (b.activeStageIdx !== undefined)     setActiveStageIdx(Number(b.activeStageIdx) || 0);
+          if (b.consecutiveRed !== undefined)     setConsecutiveRed(Number(b.consecutiveRed) || 0);
+          if (b.workflowDone !== undefined)       setWorkflowDone(Boolean(b.workflowDone));
+          if (b.fallbackTriggered !== undefined)  setFallbackTriggered(Boolean(b.fallbackTriggered));
+          if (Array.isArray(b.stagePnl))          setStagePnl(b.stagePnl);
+        } catch { /* malformed JSON — start fresh */ }
       }
 
-      // Auto execute
-      if (savedAutoExec !== null) {
-        setAutoExecute(savedAutoExec === "true");
-      }
-
-      // Workflow
-      try {
-        if (savedWorkflow && savedWorkflow !== "null") {
-          setWorkflow(JSON.parse(savedWorkflow));
-        }
-        if (savedStages && savedStages !== "null") {
-          setStageStatuses(JSON.parse(savedStages));
-        }
-        if (savedStageIdx && savedStageIdx !== "null") {
-          setActiveStageIdx(parseInt(savedStageIdx, 10) || 0);
-        }
-        if (savedConsecRed && savedConsecRed !== "null") {
-          setConsecutiveRed(parseInt(savedConsecRed, 10) || 0);
-        }
-        if (savedWorkflowDone !== null) {
-          setWorkflowDone(savedWorkflowDone === "true");
-        }
-        if (savedFallback !== null) {
-          setFallbackTriggered(savedFallback === "true");
-        }
-        if (savedStagePnl && savedStagePnl !== "null") {
-          setStagePnl(JSON.parse(savedStagePnl));
-        }
-      } catch { /* bad JSON — ignore, start fresh */ }
-
-      // Load activity log from D1 (last 12 hrs)
+      // Activity log from D1 (last 12 hrs)
       const logs = await d1GetLogs(null, 12);
       if (logs.length > 0) {
         const events = logs.map(r => ({
@@ -337,67 +297,38 @@ export default function Dashboard() {
   // ── Persist market hours ──────────────────────────────────────────────────
   useEffect(() => {
     if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.ENFORCE_HOURS, String(enforceHours));
+    kvSetSetting(HOURS_KEY, String(enforceHours));
   }, [enforceHours]);
 
-  // ── Persist strategy + autoExecute ───────────────────────────────────────
+  // ── Persist all strategy state as ONE KV write ────────────────────────────
+  // Any change to any of the 9 strategy fields → single KV write (was 9 writes)
   useEffect(() => {
     if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.STRATEGY, activeStrategy || "off");
-  }, [activeStrategy]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.AUTO_EXECUTE, String(autoExecute));
-  }, [autoExecute]);
-
-  // ── Persist workflow state ────────────────────────────────────────────────
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.WORKFLOW, workflow ? JSON.stringify(workflow) : "null");
-  }, [workflow]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.STAGE_STATUSES, JSON.stringify(stageStatuses));
-  }, [stageStatuses]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.STAGE_IDX, String(activeStageIdx));
-  }, [activeStageIdx]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.CONSEC_RED, String(consecutiveRed));
-  }, [consecutiveRed]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.WORKFLOW_DONE, String(workflowDone));
-  }, [workflowDone]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.FALLBACK, String(fallbackTriggered));
-  }, [fallbackTriggered]);
-
-  useEffect(() => {
-    if (!bootstrappedRef.current) return;
-    kvSetSetting(KV.STAGE_PNL, JSON.stringify(stagePnl));
-  }, [stagePnl]);
+    kvSetSetting(BUNDLE_KEY, JSON.stringify({
+      activeStrategy:    activeStrategy || "off",
+      autoExecute,
+      workflow:          workflow || null,
+      stageStatuses,
+      activeStageIdx,
+      consecutiveRed,
+      workflowDone,
+      fallbackTriggered,
+      stagePnl,
+    }));
+  }, [
+    activeStrategy, autoExecute, workflow, stageStatuses,
+    activeStageIdx, consecutiveRed, workflowDone, fallbackTriggered, stagePnl,
+  ]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleBalanceConfirm = useCallback((amount) => {
-    const fresh = createPortfolio(amount);
-    setPortfolio(fresh);
+    setPortfolio(createPortfolio(amount));
   }, []);
 
   const handleReset = useCallback(async (newAmount) => {
-    const fresh = resetPortfolio(newAmount);
-    setPortfolio(fresh);
+    setPortfolio(resetPortfolio(newAmount));
     setShowReset(false);
-    // Clear all strategy state on reset
+    // Clear all strategy state in memory
     setActiveStrategy("off");
     setAutoExecute(false);
     setWorkflow(null);
@@ -408,21 +339,11 @@ export default function Dashboard() {
     setFallbackTriggered(false);
     setStagePnl([]);
     setActivityEvents([]);
-    // Wipe KV strategy keys
-    await Promise.all([
-      kvSetSetting(KV.STRATEGY,       "off"),
-      kvSetSetting(KV.AUTO_EXECUTE,   "false"),
-      kvSetSetting(KV.WORKFLOW,       "null"),
-      kvSetSetting(KV.STAGE_STATUSES, "[]"),
-      kvSetSetting(KV.STAGE_IDX,      "0"),
-      kvSetSetting(KV.CONSEC_RED,     "0"),
-      kvSetSetting(KV.WORKFLOW_DONE,  "false"),
-      kvSetSetting(KV.FALLBACK,       "false"),
-      kvSetSetting(KV.STAGE_PNL,      "[]"),
-    ]);
+    // Clear KV bundle in one write
+    await kvSetSetting(BUNDLE_KEY, JSON.stringify(EMPTY_BUNDLE));
   }, []);
 
-  // AI strategy call (calls Worker → Anthropic)
+  // AI strategy call (Worker → Anthropic)
   const handleAIStrategy = useCallback(async ({ prompt, market, currentPrice, portfolio: summary }) => {
     const res = await fetch(WORKER_BASE + config.workers.routes.strategy, {
       method:  "POST",
@@ -435,7 +356,7 @@ export default function Dashboard() {
     return json.data;
   }, []);
 
-  // Activity log — write to memory + D1
+  // Activity log — normalise, write to D1, append to memory
   const handleActivityEvent = useCallback((eventOrCmd) => {
     if (eventOrCmd === "__clear__gold") {
       setActivityEvents(prev => prev.filter(e => e.market !== "gold"));
@@ -446,13 +367,11 @@ export default function Dashboard() {
       return;
     }
 
-    // Normalise
     const ev = (eventOrCmd?.id && eventOrCmd?.time)
       ? eventOrCmd
       : makeActivityEvent(eventOrCmd);
 
-    // Write to D1 (async, don't await)
-    d1PostLog(ev);
+    d1PostLog(ev); // async, non-blocking
 
     setActivityEvents(prev => {
       const next = [...prev, ev];
@@ -460,7 +379,7 @@ export default function Dashboard() {
     });
   }, []);
 
-  // Load more activity logs (12 hrs further back per click)
+  // Load more logs — 12 hrs further back per click
   const handleLoadMoreLogs = useCallback(async () => {
     if (logLoading || !logHasMore) return;
     setLogLoading(true);
@@ -481,7 +400,7 @@ export default function Dashboard() {
         time:     new Date(r.logged_at),
         fromD1:   true,
       }));
-      setActivityEvents(prev => [...events, ...prev]); // prepend older events
+      setActivityEvents(prev => [...events, ...prev]); // prepend older to top
       setLogOldestTs(older[older.length - 1]?.logged_at || null);
       setLogHasMore(older.length >= 50);
     } finally {
@@ -489,7 +408,7 @@ export default function Dashboard() {
     }
   }, [logLoading, logHasMore, logOldestTs]);
 
-  // ── Loading state ─────────────────────────────────────────────────────────
+  // ── Loading / first-run states ────────────────────────────────────────────
   if (!bootstrapped) {
     return (
       <div className="dashboard-loading">
@@ -503,41 +422,34 @@ export default function Dashboard() {
     return <BalanceModal onConfirm={handleBalanceConfirm} />;
   }
 
-  const summary      = calcPortfolioSummary(portfolio);
+  const summary       = calcPortfolioSummary(portfolio);
   const totalReturnUp = summary.totalReturn >= 0;
   const dayPnLUp      = summary.realisedPnL >= 0;
   const setOpen       = isMarketOpen("set",  enforceHours);
   const goldOpen      = isMarketOpen("gold", enforceHours);
 
-  // Props shared to both market pages
+  // Single props object passed to both market pages — avoids repetition
   const sharedMarketProps = {
     portfolio,
     setPortfolio,
     enforceHours,
-    onAIStrategy:      handleAIStrategy,
+    onAIStrategy:        handleAIStrategy,
     activeStrategy,
-    onStrategyChange:  setActiveStrategy,
+    onStrategyChange:    setActiveStrategy,
     autoExecute,
     onAutoExecuteChange: setAutoExecute,
     activityEvents,
-    onActivityEvent:   handleActivityEvent,
-    onLoadMoreLogs:    handleLoadMoreLogs,
+    onActivityEvent:     handleActivityEvent,
+    onLoadMoreLogs:      handleLoadMoreLogs,
     logLoading,
     logHasMore,
-    workflow,
-    setWorkflow,
-    stageStatuses,
-    setStageStatuses,
-    activeStageIdx,
-    setActiveStageIdx,
-    consecutiveRed,
-    setConsecutiveRed,
-    workflowDone,
-    setWorkflowDone,
-    fallbackTriggered,
-    setFallbackTriggered,
-    stagePnl,
-    setStagePnl,
+    workflow,          setWorkflow,
+    stageStatuses,     setStageStatuses,
+    activeStageIdx,    setActiveStageIdx,
+    consecutiveRed,    setConsecutiveRed,
+    workflowDone,      setWorkflowDone,
+    fallbackTriggered, setFallbackTriggered,
+    stagePnl,          setStagePnl,
     aiWorkflowActive,
   };
 
@@ -609,7 +521,7 @@ export default function Dashboard() {
               <button
                 className={`toggle-btn ${enforceHours ? "on" : "off"}`}
                 onClick={() => setEnforceHours(v => !v)}
-                aria-label={`Market hours enforcement: ${enforceHours ? "ON" : "OFF"}`}
+                aria-label={`Market hours: ${enforceHours ? "ON" : "OFF"}`}
               >
                 <span className="toggle-knob" />
               </button>
@@ -644,12 +556,8 @@ export default function Dashboard() {
 
       {/* ── Tab Content ── */}
       <main className="tab-content">
-        {activeTab === "gold" && (
-          <GoldMarket {...sharedMarketProps} />
-        )}
-        {activeTab === "set" && (
-          <SetMarket {...sharedMarketProps} />
-        )}
+        {activeTab === "gold" && <GoldMarket {...sharedMarketProps} />}
+        {activeTab === "set"  && <SetMarket  {...sharedMarketProps} />}
         {activeTab === "portfolio" && (
           <div className="coming-soon-page">
             <div className="coming-icon">💼</div>
