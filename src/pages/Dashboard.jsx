@@ -9,6 +9,7 @@ import GoldMarket from "./GoldMarket.jsx";
 import SetMarket  from "./SetMarket.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { createPortfolio, resetPortfolio, calcPortfolioSummary, isMarketOpen } from "../core/portfolio-engine.js";
+import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import config from "../../config.js";
 
 // ── KV persistence helpers (calls /api/portfolio Worker) ─────────────────────
@@ -118,13 +119,17 @@ const TABS = [
 ];
 
 export default function Dashboard() {
-  const [portfolio, setPortfolio]       = useState(null);   // null = not loaded yet
+  const [portfolio, setPortfolio]       = useState(null);
   const [activeTab, setActiveTab]       = useState("gold");
   const [enforceHours, setEnforceHours] = useState(true);
   const [showReset, setShowReset]       = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
-  const [activeStrategy, setActiveStrategy] = useState(null);  // Phase 4 BUG001 fix — lifted from market pages
-  const [activityEvents, setActivityEvents] = useState([]);     // Phase 4 — activity log feed
+
+  // ── Lifted: activeStrategy (BUG001) ──────────────────────────────────────
+  const [activeStrategy, setActiveStrategy] = useState("off");
+
+  // ── Lifted: activityEvents ────────────────────────────────────────────────
+  const [activityEvents, setActivityEvents] = useState([]);
 
   // ── Lifted: AI workflow state (BUG002) ───────────────────────────────────
   const [workflow,          setWorkflow]          = useState(null);
@@ -137,6 +142,7 @@ export default function Dashboard() {
 
   // BUG003: AI workflow active = workflow exists and not done
   const aiWorkflowActive = !!workflow && !workflowDone;
+
   // ── Load state from KV on mount ──────────────────────────────────────────────
   useEffect(() => {
     async function load() {
@@ -193,24 +199,27 @@ export default function Dashboard() {
     return json.data;
   }, []);
 
-// Activity log event handler — called by market pages
-  // Special string "__clear__gold" or "__clear__set" clears that market's events
-  const handleActivityEvent = useCallback((ev) => {
-    if (ev === "__clear__gold") {
+  // Activity log handler (passed to all market pages)
+  const handleActivityEvent = useCallback((eventOrCmd) => {
+    if (eventOrCmd === "__clear__gold") {
       setActivityEvents(prev => prev.filter(e => e.market !== "gold"));
       return;
     }
-    if (ev === "__clear__set") {
+    if (eventOrCmd === "__clear__set") {
       setActivityEvents(prev => prev.filter(e => e.market !== "set"));
       return;
     }
+    // Normalise: if the event is missing id/time it came from a raw call (e.g. OrderPanel)
+    // wrap it with makeActivityEvent so ActivityLog always gets a well-shaped object
+    const ev = (eventOrCmd?.id && eventOrCmd?.time)
+      ? eventOrCmd
+      : makeActivityEvent(eventOrCmd);
     setActivityEvents(prev => {
       const next = [...prev, ev];
       return next.length > 200 ? next.slice(-200) : next;
     });
   }, []);
 
-  
   // ── Loading state ─────────────────────────────────────────────────────────
   if (!bootstrapped) {
     return (
@@ -339,7 +348,7 @@ export default function Dashboard() {
 
       {/* ── Tab Content ── */}
       <main className="tab-content">
-         {activeTab === "gold" && (
+        {activeTab === "gold" && (
           <GoldMarket
             portfolio={portfolio}
             setPortfolio={setPortfolio}
@@ -349,17 +358,24 @@ export default function Dashboard() {
             onStrategyChange={setActiveStrategy}
             activityEvents={activityEvents}
             onActivityEvent={handleActivityEvent}
-            workflow={workflow} setWorkflow={setWorkflow}
-            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
-            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
-            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
-            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
-            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
-            stagePnl={stagePnl} setStagePnl={setStagePnl}
+            workflow={workflow}
+            setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses}
+            setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx}
+            setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed}
+            setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone}
+            setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered}
+            setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl}
+            setStagePnl={setStagePnl}
             aiWorkflowActive={aiWorkflowActive}
           />
         )}
-       {activeTab === "set" && (
+        {activeTab === "set" && (
           <SetMarket
             portfolio={portfolio}
             setPortfolio={setPortfolio}
@@ -369,13 +385,20 @@ export default function Dashboard() {
             onStrategyChange={setActiveStrategy}
             activityEvents={activityEvents}
             onActivityEvent={handleActivityEvent}
-            workflow={workflow} setWorkflow={setWorkflow}
-            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
-            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
-            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
-            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
-            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
-            stagePnl={stagePnl} setStagePnl={setStagePnl}
+            workflow={workflow}
+            setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses}
+            setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx}
+            setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed}
+            setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone}
+            setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered}
+            setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl}
+            setStagePnl={setStagePnl}
             aiWorkflowActive={aiWorkflowActive}
           />
         )}
