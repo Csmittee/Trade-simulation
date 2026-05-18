@@ -47,6 +47,17 @@ export default function GoldMarket({
   onAutoExecuteChange,
   activityEvents,
   onActivityEvent,
+  onLoadMoreLogs,
+  logLoading,
+  logHasMore,
+  workflow, setWorkflow,
+  stageStatuses, setStageStatuses,
+  activeStageIdx, setActiveStageIdx,
+  consecutiveRed, setConsecutiveRed,
+  workflowDone, setWorkflowDone,
+  fallbackTriggered, setFallbackTriggered,
+  stagePnl, setStagePnl,
+  aiWorkflowActive,
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState("THAI_GOLD_BAHT");
   const [timeframe,       setTimeframe]       = useState("1D");
@@ -368,6 +379,14 @@ export default function GoldMarket({
             recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
             selectedSymbol="THAI_GOLD_BAHT"
             onLogActivity={onActivityEvent}
+            aiWorkflowActive={aiWorkflowActive}
+            workflow={workflow} setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl} setStagePnl={setStagePnl}
           />
 
           {orderMode === "manual" && (
