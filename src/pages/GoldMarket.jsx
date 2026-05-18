@@ -236,9 +236,9 @@ export default function GoldMarket({
             </div>
 
             {!panel3Collapsed && (
-              <div className="panel-bottom-scroll">
+              <div className="panel-bottom-body">
 
-                <div>
+                <div className="panel-bottom-zone positions-zone">
                   <div className="panel-bottom-section-title">
                     Open Gold Positions
                     <TooltipIcon content="Open gold trades. Entry price, P&L, stop loss and take profit." />
@@ -328,10 +328,10 @@ export default function GoldMarket({
                   )}
                 </div>
 
-                <div>
+                <div className="panel-bottom-zone log-zone">
                   <div className="panel-bottom-section-title">
                     Activity Log — Gold
-                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade." />
+                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade. Grouped by hour." />
                     {activityEvents.filter(e => e.market === "gold").length > 0 && (
                       <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__gold")}>Clear</button>
                     )}

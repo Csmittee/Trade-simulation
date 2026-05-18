@@ -324,10 +324,10 @@ export default function SetMarket({
             </div>
 
             {!panel3Collapsed && (
-              <div className="panel-bottom-scroll">
+              <div className="panel-bottom-body">
 
                 {/* Positions */}
-                <div>
+                <div className="panel-bottom-zone positions-zone">
                   <div className="panel-bottom-section-title">
                     Open SET Positions
                     <TooltipIcon content="Open SET/MAI positions. Commission and transfer fees already deducted from P&L." />
@@ -420,10 +420,10 @@ export default function SetMarket({
                 </div>
 
                 {/* Activity Log */}
-                <div>
+                <div className="panel-bottom-zone log-zone">
                   <div className="panel-bottom-section-title">
                     Activity Log — SET
-                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade." />
+                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade. Grouped by hour." />
                     {setEventsCount > 0 && (
                       <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__set")}>
                         Clear
