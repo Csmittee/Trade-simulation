@@ -13,36 +13,36 @@ const config = {
   },
 
   // ── Cloudflare Worker Endpoints ──────────────────────────────────
-  // Replace with your actual Workers subdomain after deployment
   workers: {
     base: "https://tts-workers.csmittee.workers.dev",
     routes: {
-      gold:     "/api/gold",          // metals.live + Thai gold price
-      set:      "/api/set",           // Yahoo Finance SET proxy
-      intel:    "/api/intel",         // Anthropic insider intel (cached)
-      strategy: "/api/strategy",      // Anthropic AI strategy assist
-      settings: "/api/settings",      // KV read/write for dashboard settings
-      portfolio: "/api/portfolio",    // KV read/write for portfolio state
-      trades:   "/api/trades",        // D1 trade history
+      gold:      "/api/gold",          // metals.live + Thai gold price
+      set:       "/api/set",           // Yahoo Finance SET proxy
+      intel:     "/api/intel",         // Anthropic insider intel (cached)
+      strategy:  "/api/strategy",      // Anthropic AI strategy assist
+      settings:  "/api/settings",      // KV read/write for dashboard settings
+      portfolio: "/api/portfolio",     // KV read/write for portfolio state
+      trades:    "/api/trades",        // D1 trade history
+      logs:      "/api/logs",          // D1 activity log (Phase 5)
     }
   },
 
   // ── Market Data ──────────────────────────────────────────────────
   data: {
     gold: {
-      refreshIntervalMs: 60000,       // refresh gold price every 60 seconds
+      refreshIntervalMs: 60000,
       symbols: {
         xauusd: "XAUUSD",
         thbGold: "THAI_GOLD_BAHT",
       },
-      thaiGoldPurity: 0.965,          // 96.5% purity (standard Thai gold bar)
-      bahtWeightGrams: 15.244,        // 1 Thai baht weight = 15.244 grams
+      thaiGoldPurity: 0.965,
+      bahtWeightGrams: 15.244,
       troyOzGrams: 31.1035,
     },
     set: {
-      refreshIntervalMs: 60000,       // 15-min delayed data, refresh every 60s
-      yahooSuffix: ".BK",             // Yahoo Finance suffix for SET stocks
-      watchlistDefault: [             // default stocks shown on load
+      refreshIntervalMs: 60000,
+      yahooSuffix: ".BK",
+      watchlistDefault: [
         "PTT.BK",
         "AOT.BK",
         "ADVANC.BK",
@@ -63,10 +63,9 @@ const config = {
         { open: "10:00", close: "12:30" },
         { open: "14:30", close: "17:00" },
       ],
-      tradingDays: [1, 2, 3, 4, 5],   // Mon–Fri (0=Sun, 6=Sat)
+      tradingDays: [1, 2, 3, 4, 5],
     },
     gold: {
-      // Gold trades 24x5 — closed Sat 05:00 to Sun 05:00 ICT
       timezone: "Asia/Bangkok",
       tradingDays: [1, 2, 3, 4, 5],
     },
@@ -74,18 +73,18 @@ const config = {
 
   // ── Simulation Engine ────────────────────────────────────────────
   sim: {
-    randomWalkMaxPct: 0.003,          // ±0.3% per hour when market hours OFF
+    randomWalkMaxPct: 0.003,
     priceDecimalsSET: 2,
     priceDecimalsGold: 2,
   },
 
   // ── AI / Anthropic ───────────────────────────────────────────────
   ai: {
-    model: "claude-sonnet-4-20250514", // always use this — update masterseed if changed
+    model: "claude-sonnet-4-20250514",
     intelMaxTokens: 150,
     strategyMaxTokens: 500,
     intelCacheTtlHours: 24,
-    hoverDelayMs: 1500,               // 1.5s hover before intel fetch triggers
+    hoverDelayMs: 1500,
   },
 
   // ── Strategy Presets ─────────────────────────────────────────────
@@ -126,12 +125,12 @@ const config = {
 
   // ── UI / Tooltip ─────────────────────────────────────────────────
   ui: {
-    chartDefaultTimeframe: "1D",      // 1D | 1W | 1M
+    chartDefaultTimeframe: "1D",
     chartTypes: ["candlestick", "line"],
     riskLevels: {
-      low:    { maxPortfolioPct: 0.02, color: "#22c55e" },   // 2% per trade
-      medium: { maxPortfolioPct: 0.05, color: "#f59e0b" },   // 5% per trade
-      high:   { maxPortfolioPct: 0.10, color: "#ef4444" },   // 10% per trade
+      low:    { maxPortfolioPct: 0.02, color: "#22c55e" },
+      medium: { maxPortfolioPct: 0.05, color: "#f59e0b" },
+      high:   { maxPortfolioPct: 0.10, color: "#ef4444" },
     },
   },
 };
