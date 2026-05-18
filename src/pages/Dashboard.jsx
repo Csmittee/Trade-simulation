@@ -125,6 +125,18 @@ export default function Dashboard() {
   const [bootstrapped, setBootstrapped] = useState(false);
   const [activeStrategy, setActiveStrategy] = useState(null);  // Phase 4 BUG001 fix — lifted from market pages
   const [activityEvents, setActivityEvents] = useState([]);     // Phase 4 — activity log feed
+
+  // ── Lifted: AI workflow state (BUG002) ───────────────────────────────────
+  const [workflow,          setWorkflow]          = useState(null);
+  const [stageStatuses,     setStageStatuses]     = useState([]);
+  const [activeStageIdx,    setActiveStageIdx]    = useState(0);
+  const [consecutiveRed,    setConsecutiveRed]    = useState(0);
+  const [workflowDone,      setWorkflowDone]      = useState(false);
+  const [fallbackTriggered, setFallbackTriggered] = useState(false);
+  const [stagePnl,          setStagePnl]          = useState([]);
+
+  // BUG003: AI workflow active = workflow exists and not done
+  const aiWorkflowActive = !!workflow && !workflowDone;
   // ── Load state from KV on mount ──────────────────────────────────────────────
   useEffect(() => {
     async function load() {
@@ -192,7 +204,10 @@ export default function Dashboard() {
       setActivityEvents(prev => prev.filter(e => e.market !== "set"));
       return;
     }
-    setActivityEvents(prev => [...prev.slice(-199), ev]); // keep last 200 events
+    setActivityEvents(prev => {
+      const next = [...prev, ev];
+      return next.length > 200 ? next.slice(-200) : next;
+    });
   }, []);
 
   
@@ -334,6 +349,14 @@ export default function Dashboard() {
             onStrategyChange={setActiveStrategy}
             activityEvents={activityEvents}
             onActivityEvent={handleActivityEvent}
+            workflow={workflow} setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl} setStagePnl={setStagePnl}
+            aiWorkflowActive={aiWorkflowActive}
           />
         )}
        {activeTab === "set" && (
@@ -346,6 +369,14 @@ export default function Dashboard() {
             onStrategyChange={setActiveStrategy}
             activityEvents={activityEvents}
             onActivityEvent={handleActivityEvent}
+            workflow={workflow} setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl} setStagePnl={setStagePnl}
+            aiWorkflowActive={aiWorkflowActive}
           />
         )}
         {activeTab === "portfolio" && (
