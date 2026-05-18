@@ -45,15 +45,6 @@ export default function GoldMarket({
   onStrategyChange,
   activityEvents,
   onActivityEvent,
-  // Lifted workflow state (BUG002)
-  workflow, setWorkflow,
-  stageStatuses, setStageStatuses,
-  activeStageIdx, setActiveStageIdx,
-  consecutiveRed, setConsecutiveRed,
-  workflowDone, setWorkflowDone,
-  fallbackTriggered, setFallbackTriggered,
-  stagePnl, setStagePnl,
-  aiWorkflowActive, // BUG003
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState("THAI_GOLD_BAHT");
   const [timeframe,       setTimeframe]       = useState("1D");
@@ -88,16 +79,10 @@ export default function GoldMarket({
 
   const handleStrategyBuy = useCallback(async (order) => {
     const result = await handleBuy(order);
-    if (result?.error) {
-      console.warn("[StrategyBuy] rejected:", result.error);
-      pushEvent({ type: "block", symbol: order.symbol, detail: `Rejected: ${result.error}` });
-      return result;
-    }
     if (result?.trade) {
       pushEvent({ type: "buy", symbol: order.symbol, price: order.price, detail: `${order.strategy || activeStrategy} × ${order.qty}` });
       logTradeToD1({ id: result.trade.id, symbol: order.symbol, market: "gold", side: "buy", qty: order.qty, entry_price: order.price, exit_price: null, pnl: null, strategy: order.strategy || activeStrategy, opened_at: new Date().toISOString(), closed_at: null, sim_mode: 1 });
     }
-    return result;
   }, [handleBuy, activeStrategy]);
 
   const handleStrategySell = useCallback(async (positionId, price) => {
@@ -249,7 +234,12 @@ export default function GoldMarket({
                             <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
                             <span>
                               <Tooltip content="Close at current market price.">
-                                <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>Close</button>
+                                <button className="close-pos-btn" onClick={() => {
+                                  const result = handleSell(pos.id, pos.currentPrice);
+                                  if (!result?.error) {
+                                    pushEvent({ type: "sell", symbol: pos.symbol, price: pos.currentPrice, detail: `Closed × ${pos.qty} @ ฿${pos.currentPrice?.toLocaleString("en-US", { maximumFractionDigits: 0 })} | P&L: ${pos.unrealisedPnL >= 0 ? "+" : ""}฿${pos.unrealisedPnL?.toLocaleString("en-US", { maximumFractionDigits: 0 })}`, pnl: pos.unrealisedPnL });
+                                  }
+                                }}>Close</button>
                               </Tooltip>
                             </span>
                           </div>
@@ -294,14 +284,6 @@ export default function GoldMarket({
             recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
             selectedSymbol="THAI_GOLD_BAHT"
             onLogActivity={onActivityEvent}
-            aiWorkflowActive={aiWorkflowActive}
-            workflow={workflow} setWorkflow={setWorkflow}
-            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
-            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
-            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
-            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
-            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
-            stagePnl={stagePnl} setStagePnl={setStagePnl}
           />
 
           {orderMode === "manual" && (
@@ -316,7 +298,6 @@ export default function GoldMarket({
               onExecuteBuy={handleStrategyBuy}
               onExecuteSell={handleStrategySell}
               onStrategyEvent={handleStrategyEvent}
-              aiWorkflowActive={aiWorkflowActive}
             />
           )}
         </div>
