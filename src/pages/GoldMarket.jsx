@@ -1,10 +1,12 @@
-  /**
+/**
  * GoldMarket.jsx
  * Phase 4:
  *   - 3-panel independent scroll layout (market-body + panel-bottom)
  *   - activeStrategy now passed in from Dashboard (BUG001 fix)
  *   - Activity log events pushed via onActivityEvent
  *   - Panel 3 collapse toggle
+ *   - intel-injector wired (Phase 4)
+ *   - OrderPanel gets recentCloses + selectedSymbol + onLogActivity (Phase 4)
  */
 
 import { useState, useCallback } from "react";
@@ -14,7 +16,7 @@ import StrategyPanel from "../components/StrategyPanel.jsx";
 import ActivityLog   from "../components/ActivityLog.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useGoldMarket } from "../injectors/gold-injector.js";
-import { useFetchIntel } from "../injectors/intel-injector.js";
+import { useFetchIntel }  from "../injectors/intel-injector.js";
 import { calcPortfolioSummary, calcHourlyPnL } from "../core/portfolio-engine.js";
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
@@ -39,22 +41,23 @@ export default function GoldMarket({
   setPortfolio,
   enforceHours,
   onAIStrategy,
-  // Phase 4 — lifted from local state into Dashboard
   activeStrategy,
   onStrategyChange,
-  // Phase 4 — activity log
   activityEvents,
   onActivityEvent,
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState("THAI_GOLD_BAHT");
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
-  const [orderMode,       setOrderMode]       = useState("manual"); // "manual" | "ai"
+  const [orderMode,       setOrderMode]       = useState("manual");
+
+  // ── Intel hook (Phase 4) ─────────────────────────────────────────────────────
   const fetchIntel = useFetchIntel();
+
   const {
     goldData, priceHistory, loading, error, partial,
     lastUpdated, historyLoading, marketOpen,
-    handleBuy, handleSell, fetchIntel,
+    handleBuy, handleSell,
   } = useGoldMarket({ portfolio, setPortfolio, enforceHours, timeframe });
 
   const summary       = calcPortfolioSummary(portfolio);
@@ -70,67 +73,26 @@ export default function GoldMarket({
   const priceCurrency = activeSymbol === "THAI_GOLD_BAHT" ? "THB" : "USD";
   const priceUnit     = activeSymbol === "THAI_GOLD_BAHT" ? "/ baht-weight" : "/ troy oz";
 
-  // ── Activity push helper ─────────────────────────────────────────────────────
   function pushEvent(params) {
     onActivityEvent?.(makeActivityEvent({ market: "gold", ...params }));
   }
 
-  // ── Strategy BUY ─────────────────────────────────────────────────────────────
   const handleStrategyBuy = useCallback(async (order) => {
     const result = await handleBuy(order);
     if (result?.trade) {
-      pushEvent({
-        type:   "buy",
-        symbol: order.symbol,
-        price:  order.price,
-        detail: `${order.strategy || activeStrategy} × ${order.qty}`,
-      });
-      logTradeToD1({
-        id:          result.trade.id,
-        symbol:      order.symbol,
-        market:      "gold",
-        side:        "buy",
-        qty:         order.qty,
-        entry_price: order.price,
-        exit_price:  null,
-        pnl:         null,
-        strategy:    order.strategy || activeStrategy,
-        opened_at:   new Date().toISOString(),
-        closed_at:   null,
-        sim_mode:    1,
-      });
+      pushEvent({ type: "buy", symbol: order.symbol, price: order.price, detail: `${order.strategy || activeStrategy} × ${order.qty}` });
+      logTradeToD1({ id: result.trade.id, symbol: order.symbol, market: "gold", side: "buy", qty: order.qty, entry_price: order.price, exit_price: null, pnl: null, strategy: order.strategy || activeStrategy, opened_at: new Date().toISOString(), closed_at: null, sim_mode: 1 });
     }
   }, [handleBuy, activeStrategy]);
 
-  // ── Strategy SELL ────────────────────────────────────────────────────────────
   const handleStrategySell = useCallback(async (positionId, price) => {
     const result = await handleSell(positionId, price);
     if (result?.trade) {
-      pushEvent({
-        type:   "sell",
-        symbol: result.trade.symbol,
-        price,
-        detail: `Closed @ ฿${price?.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
-        pnl:    result.trade.pnl,
-      });
-      logTradeToD1({
-        id:          result.trade.id,
-        symbol:      result.trade.symbol,
-        market:      "gold",
-        side:        "sell",
-        qty:         result.trade.qty,
-        entry_price: result.trade.entryPrice,
-        exit_price:  price,
-        pnl:         result.trade.pnl,
-        strategy:    result.trade.strategy || activeStrategy,
-        opened_at:   result.trade.openedAt,
-        closed_at:   new Date().toISOString(),
-        sim_mode:    1,
-      });
+      pushEvent({ type: "sell", symbol: result.trade.symbol, price, detail: `Closed @ ฿${price?.toLocaleString("en-US", { maximumFractionDigits: 0 })}`, pnl: result.trade.pnl });
+      logTradeToD1({ id: result.trade.id, symbol: result.trade.symbol, market: "gold", side: "sell", qty: result.trade.qty, entry_price: result.trade.entryPrice, exit_price: price, pnl: result.trade.pnl, strategy: result.trade.strategy || activeStrategy, opened_at: result.trade.openedAt, closed_at: new Date().toISOString(), sim_mode: 1 });
     }
   }, [handleSell, activeStrategy]);
 
-  // ── Strategy events (signal / armed / block) forwarded from StrategyPanel ────
   function handleStrategyEvent(ev) {
     pushEvent({ ...ev, symbol: activeSymbol });
   }
@@ -138,18 +100,14 @@ export default function GoldMarket({
   return (
     <div className="market-page gold-market">
 
-      {/* ── Ticker Header (fixed height strip) ── */}
+      {/* ── Ticker Header ── */}
       <div className="ticker-header">
         <div className="symbol-tabs">
           {[
             { key: "THAI_GOLD_BAHT", label: "Thai Gold (บาท)", sublabel: "96.5% purity" },
             { key: "XAUUSD",         label: "XAUUSD",          sublabel: "spot USD" },
           ].map(({ key, label, sublabel }) => (
-            <button
-              key={key}
-              className={`symbol-tab ${activeSymbol === key ? "active" : ""}`}
-              onClick={() => setActiveSymbol(key)}
-            >
+            <button key={key} className={`symbol-tab ${activeSymbol === key ? "active" : ""}`} onClick={() => setActiveSymbol(key)}>
               <span className="symbol-name">{label}</span>
               <span className="symbol-sub">{sublabel}</span>
             </button>
@@ -157,21 +115,13 @@ export default function GoldMarket({
         </div>
 
         <div className="price-display">
-          {loading ? (
-            <span className="price-loading">Loading...</span>
-          ) : error ? (
-            <span className="price-error">⚠ {error}</span>
-          ) : (
+          {loading ? <span className="price-loading">Loading...</span>
+          : error   ? <span className="price-error">⚠ {error}</span>
+          : (
             <>
-              <span className="price-main">
-                {priceCurrency} {currentPrice?.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-              </span>
+              <span className="price-main">{priceCurrency} {currentPrice?.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
               <span className="price-unit">{priceUnit}</span>
-              {partial && (
-                <Tooltip content="One data source is unavailable. Price may be approximate.">
-                  <span className="partial-warning">⚠ Partial data</span>
-                </Tooltip>
-              )}
+              {partial && <Tooltip content="One data source is unavailable. Price may be approximate."><span className="partial-warning">⚠ Partial data</span></Tooltip>}
             </>
           )}
         </div>
@@ -186,19 +136,22 @@ export default function GoldMarket({
         </div>
       </div>
 
-      {/* ── Main Body: Left column (chart + bottom) | Right column (controls) ── */}
+      {/* ── Main Body ── */}
       <div className="market-body">
 
-        {/* Left column — chart on top, positions+log stacked below */}
+        {/* Left column */}
         <div className="panel-left">
 
-          {/* Chart — scrollable, fills available height */}
           <div className="panel-chart">
-            <OrderPanel
-              ...existing props...
-              recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
-              selectedSymbol="THAI_GOLD_BAHT"
-              onLogActivity={onActivityEvent}
+            {/* ── Chart Panel ── */}
+            <ChartPanel
+              data={priceHistory}
+              symbol={activeSymbol}
+              market="gold"
+              timeframe={timeframe}
+              historyLoading={historyLoading}
+              onTimeframeChange={setTimeframe}
+              onIntelRequest={(symbol, date) => fetchIntel(symbol, date, "gold")}
             />
 
             {hourlyPnL.length > 0 && (
@@ -234,16 +187,13 @@ export default function GoldMarket({
             </div>
           </div>
 
-          {/* Panel Bottom — positions + activity log, stacked below chart */}
+          {/* Panel Bottom — positions + activity */}
           <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
             <div className="panel3-header">
               <span className="panel3-title">
                 Positions ({goldPositions.length}) · Activity ({activityEvents.filter(e => e.market === "gold").length})
               </span>
-              <button
-                className="panel3-collapse-btn"
-                onClick={() => setPanel3Collapsed(v => !v)}
-              >
+              <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
                 {panel3Collapsed ? "▲ Show" : "▼ Hide"}
               </button>
             </div>
@@ -251,7 +201,6 @@ export default function GoldMarket({
             {!panel3Collapsed && (
               <div className="panel-bottom-scroll">
 
-                {/* Positions */}
                 <div>
                   <div className="panel-bottom-section-title">
                     Open Gold Positions
@@ -285,9 +234,7 @@ export default function GoldMarket({
                             <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
                             <span>
                               <Tooltip content="Close at current market price.">
-                                <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>
-                                  Close
-                                </button>
+                                <button className="close-pos-btn" onClick={() => handleSell(pos.id, pos.currentPrice)}>Close</button>
                               </Tooltip>
                             </span>
                           </div>
@@ -297,15 +244,12 @@ export default function GoldMarket({
                   )}
                 </div>
 
-                {/* Activity Log */}
                 <div>
                   <div className="panel-bottom-section-title">
                     Activity Log — Gold
                     <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade." />
                     {activityEvents.filter(e => e.market === "gold").length > 0 && (
-                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__gold")}>
-                        Clear
-                      </button>
+                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__gold")}>Clear</button>
                     )}
                   </div>
                   <ActivityLog
@@ -319,7 +263,7 @@ export default function GoldMarket({
           </div>
         </div>
 
-        {/* Right column — Order + Strategy, full height scroll */}
+        {/* Right column — Order + Strategy */}
         <div className="panel-controls">
           <OrderPanel
             market="gold"
@@ -337,7 +281,6 @@ export default function GoldMarket({
             onLogActivity={onActivityEvent}
           />
 
-          {/* StrategyPanel only shows when Manual tab is active */}
           {orderMode === "manual" && (
             <StrategyPanel
               market="gold"
