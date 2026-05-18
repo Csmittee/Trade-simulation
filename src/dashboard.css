@@ -1291,3 +1291,103 @@ a { color: var(--gold); }
 /* Remove old placeholder styles — replaced by above */
 .ai-phase4-badge { display: none; }
 .ai-phase4-hint  { display: none; }
+
+/* ── Manual Order Collapse Toggle ───────────────────────────────────────────── */
+.manual-collapse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 2px;
+  transition: background 0.15s;
+}
+.manual-collapse-header:hover { background: var(--bg-hover); }
+.manual-collapse-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.manual-collapse-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ── Global Sell Desk ────────────────────────────────────────────────────────── */
+.sell-desk {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sell-desk-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.sell-desk-summary strong { color: var(--text-primary); }
+.sell-desk-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.sell-desk-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+}
+.sell-desk-input:focus { outline: none; border-color: var(--red); }
+.sell-desk-all-btn,
+.sell-desk-half-btn {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.sell-desk-all-btn:hover,
+.sell-desk-half-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sell-desk-preview {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 4px 0;
+}
+.sell-desk-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.sell-desk-btn:hover:not(:disabled) { opacity: 0.85; }
+.sell-desk-btn:disabled { opacity: 0.35; cursor: not-allowed; }
