@@ -581,7 +581,6 @@ export default function OrderPanel({
                 <label className="field-label">Take Profit<TooltipIcon id="tooltip-order-takeprofit" /></label>
                 <input type="number" className="field-input" value={takeProfit} onChange={e => handleTakeProfitChange(e.target.value)} placeholder="Auto-filled by risk level" step="1" />
               </div>
-              </div>
 
               {tradeCost > 0 && (
                 <div className="order-summary">
