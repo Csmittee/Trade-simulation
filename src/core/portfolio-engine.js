@@ -267,20 +267,23 @@ export function calcHourlyPnL(closedTrades) {
 export function suggestPositionSize(balance, price, stopLoss, riskLevel = "medium", market) {
   const maxRiskPct = config.ui.riskLevels[riskLevel]?.maxPortfolioPct || 0.05;
   const maxRiskAmount = balance * maxRiskPct;
+  const lotSize = getLotSize(market);
 
+  // Hard cap: never suggest more units than balance can afford
+  const maxAffordable = Math.floor(balance / price / lotSize) * lotSize || lotSize;
+
+  let suggested;
   if (!stopLoss || stopLoss >= price) {
-    // No stop loss — size by max portfolio allocation
-    const maxAllocation = balance * maxRiskPct * 10; // 10x the risk % as max position
-    const lotSize = getLotSize(market);
-    return Math.max(lotSize, Math.floor(maxAllocation / price / lotSize) * lotSize);
+    // No stop loss — size by max portfolio allocation (capped at 50% of balance)
+    const maxAllocation = balance * Math.min(maxRiskPct * 10, 0.5);
+    suggested = Math.max(lotSize, Math.floor(maxAllocation / price / lotSize) * lotSize);
+  } else {
+    const riskPerUnit = price - stopLoss;
+    if (riskPerUnit <= 0) return lotSize;
+    suggested = Math.max(lotSize, Math.floor(maxRiskAmount / riskPerUnit / lotSize) * lotSize);
   }
 
-  const riskPerUnit = price - stopLoss;
-  if (riskPerUnit <= 0) return 0;
-
-  const suggestedQty = Math.floor(maxRiskAmount / riskPerUnit);
-  const lotSize = getLotSize(market);
-  return Math.max(lotSize, Math.floor(suggestedQty / lotSize) * lotSize);
+  return Math.min(suggested, maxAffordable);
 }
 
 /**
