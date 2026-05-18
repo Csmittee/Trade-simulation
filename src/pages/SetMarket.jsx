@@ -1,10 +1,10 @@
-  /**
+/**
  * SetMarket.jsx
- * Phase 4:
- *   - 3-panel independent scroll layout (market-body + panel-bottom)
- *   - activeStrategy now passed in from Dashboard (BUG001 fix)
- *   - Activity log events pushed via onActivityEvent
- *   - Panel 3 collapse toggle
+ * Phase 5 patch:
+ * - Full props destructure — all sharedMarketProps listed (L054 fix)
+ * - autoExecute + onAutoExecuteChange added to StrategyPanel
+ * - onLoadMoreLogs + logLoading + logHasMore added to ActivityLog
+ * - Closed positions toggle — loads last 50 closed trades from D1
  */
 
 import { useState, useCallback } from "react";
@@ -33,6 +33,14 @@ async function logTradeToD1(trade) {
   } catch (e) {
     console.warn("D1 trade log failed (non-critical):", e.message);
   }
+}
+
+async function fetchClosedFromD1(market) {
+  try {
+    const res  = await fetch(`${WORKER}/api/trades?market=${market}&limit=50`);
+    const json = await res.json();
+    return json.success ? json.data : [];
+  } catch { return []; }
 }
 
 function WatchlistRow({ symbol, quote, isActive, onClick }) {
@@ -64,16 +72,15 @@ export default function SetMarket({
   setPortfolio,
   enforceHours,
   onAIStrategy,
-  
-  // Phase 4 — lifted from local state into Dashboard
   activeStrategy,
   onStrategyChange,
-  autoExecute,           // ← ADD
-  onAutoExecuteChange,   // ← ADD
-  // Phase 4 — activity log
+  autoExecute,
+  onAutoExecuteChange,
   activityEvents,
   onActivityEvent,
-  // Lifted workflow state (BUG002)
+  onLoadMoreLogs,
+  logLoading,
+  logHasMore,
   workflow, setWorkflow,
   stageStatuses, setStageStatuses,
   activeStageIdx, setActiveStageIdx,
@@ -81,13 +88,32 @@ export default function SetMarket({
   workflowDone, setWorkflowDone,
   fallbackTriggered, setFallbackTriggered,
   stagePnl, setStagePnl,
-  aiWorkflowActive, // BUG003
+  aiWorkflowActive,
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState(WATCHLIST[0]);
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
-  const [orderMode,       setOrderMode]       = useState("manual"); // "manual" | "ai"
+  const [orderMode,       setOrderMode]       = useState("manual");
   const [sellQty,         setSellQty]         = useState("");
+
+  // ── Closed positions toggle ───────────────────────────────────────────────
+  const [posTab,         setPosTab]         = useState("open");   // "open" | "closed"
+  const [closedD1,       setClosedD1]       = useState([]);
+  const [closedLoading,  setClosedLoading]  = useState(false);
+  const [closedLoaded,   setClosedLoaded]   = useState(false);
+
+  async function handleShowClosed() {
+    setPosTab("closed");
+    if (closedLoaded) return; // already fetched
+    setClosedLoading(true);
+    try {
+      const data = await fetchClosedFromD1("set");
+      setClosedD1(data);
+      setClosedLoaded(true);
+    } finally {
+      setClosedLoading(false);
+    }
+  }
 
   const {
     watchlistData, activeQuote, priceHistory, historyLoading,
@@ -106,50 +132,27 @@ export default function SetMarket({
   const handleSymbolChange = (sym) => {
     setActiveSymbol(sym);
     setTimeframe("1D");
-    // Note: activeStrategy intentionally NOT reset here — it persists across symbol switches (BUG001 fix)
   };
 
-  // ── Activity push helper ─────────────────────────────────────────────────────
   function pushEvent(params) {
     onActivityEvent?.(makeActivityEvent({ market: "set", ...params }));
   }
 
-  // ── Strategy BUY ─────────────────────────────────────────────────────────────
   const handleStrategyBuy = useCallback(async (order) => {
     const result = await handleBuy(order);
     if (result?.error) {
-      console.warn("[StrategyBuy SET] rejected:", result.error);
       pushEvent({ type: "block", symbol: order.symbol, detail: `Rejected: ${result.error}` });
       return result;
     }
     if (result?.trade) {
-      pushEvent({
-        type:   "buy",
-        symbol: order.symbol,
-        price:  order.price,
-        detail: `${order.strategy || activeStrategy} × ${order.qty}`,
-      });
-      logTradeToD1({
-        id:          result.trade.id,
-        symbol:      order.symbol,
-        market:      "set",
-        side:        "buy",
-        qty:         order.qty,
-        entry_price: order.price,
-        exit_price:  null,
-        pnl:         null,
-        strategy:    order.strategy || activeStrategy,
-        opened_at:   new Date().toISOString(),
-        closed_at:   null,
-        sim_mode:    1,
-      });
+      pushEvent({ type: "buy", symbol: order.symbol, price: order.price, detail: `${order.strategy || activeStrategy} × ${order.qty}` });
+      logTradeToD1({ id: result.trade.id, symbol: order.symbol, market: "set", side: "buy", qty: order.qty, entry_price: order.price, exit_price: null, pnl: null, strategy: order.strategy || activeStrategy, opened_at: new Date().toISOString(), closed_at: null, sim_mode: 1 });
     }
     return result;
   }, [handleBuy, activeStrategy]);
 
-  // ── Strategy SELL ────────────────────────────────────────────────────────────
   const handleStrategySell = useCallback(async (positionId, price) => {
-    const setPos = (portfolio?.positions || []).filter(p => p.market === "set" && p.symbol === activeSymbol);
+    const setPos   = (portfolio?.positions || []).filter(p => p.market === "set" && p.symbol === activeSymbol);
     const totalQty = setPos.reduce((s, p) => s + p.qty, 0);
     if (totalQty === 0) return;
     const result = executeSellQty(portfolio, "set", activeSymbol, totalQty, price || currentPrice);
@@ -163,11 +166,11 @@ export default function SetMarket({
     result.closedTrades.forEach(t => {
       logTradeToD1({ id: t.id, symbol: t.symbol, market: "set", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price || currentPrice, pnl: t.pnl, strategy: t.strategy || activeStrategy, opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
+    setClosedLoaded(false); // invalidate closed cache so next open reloads
   }, [portfolio, currentPrice, activeSymbol, activeStrategy]);
 
-  // ── Global Sell Desk (FIFO) ───────────────────────────────────────────────
   function handleSellDesk() {
-    const qty = parseFloat(sellQty);
+    const qty   = parseFloat(sellQty);
     if (!qty || qty <= 0) return;
     const price = currentPrice;
     if (!price) return;
@@ -183,9 +186,9 @@ export default function SetMarket({
       logTradeToD1({ id: t.id, symbol: t.symbol, market: "set", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price, pnl: t.pnl, strategy: t.strategy || "manual", opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
     setSellQty("");
+    setClosedLoaded(false);
   }
 
-  // ── Strategy events (signal / armed / block) forwarded from StrategyPanel ────
   function handleStrategyEvent(ev) {
     pushEvent({ ...ev, symbol: activeSymbol });
   }
@@ -195,13 +198,13 @@ export default function SetMarket({
   return (
     <div className="market-page set-market">
 
-      {/* ── Ticker Header (fixed height strip) ── */}
+      {/* ── Ticker Header ── */}
       <div className="ticker-header">
         <div className="set-header-left">
           <span className="set-market-title">📈 SET / MAI</span>
           <span className="set-delayed-badge">
             ⚠ 15-min delayed
-            <Tooltip content="SET data is provided by Yahoo Finance on a 15-minute delay. Acceptable for learning and simulation — do not use for real-time execution decisions.">
+            <Tooltip content="SET data is provided by Yahoo Finance on a 15-minute delay.">
               <span className="delayed-info">ⓘ</span>
             </Tooltip>
           </span>
@@ -236,10 +239,10 @@ export default function SetMarket({
         </div>
       </div>
 
-      {/* ── Main Body: Watchlist | Left column (chart + bottom) | Right column (controls) ── */}
+      {/* ── Main Body ── */}
       <div className="market-body">
 
-        {/* Watchlist — leftmost column, full height scroll */}
+        {/* Watchlist */}
         <div className="panel-watchlist">
           <div className="watchlist-panel">
             <div className="section-title">
@@ -266,10 +269,9 @@ export default function SetMarket({
           </div>
         </div>
 
-        {/* Left column — chart on top, positions+log stacked below */}
+        {/* Left column */}
         <div className="panel-left">
 
-          {/* Chart — scrollable */}
           <div className="panel-chart">
             <ChartPanel
               data={priceHistory}
@@ -312,16 +314,13 @@ export default function SetMarket({
             </div>
           </div>
 
-          {/* Panel Bottom — positions + activity log stacked below chart */}
+          {/* Panel Bottom — positions + log */}
           <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
             <div className="panel3-header">
               <span className="panel3-title">
                 Positions ({setPositions.length}) · Activity ({setEventsCount})
               </span>
-              <button
-                className="panel3-collapse-btn"
-                onClick={() => setPanel3Collapsed(v => !v)}
-              >
+              <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
                 {panel3Collapsed ? "▲ Show" : "▼ Hide"}
               </button>
             </div>
@@ -329,97 +328,133 @@ export default function SetMarket({
             {!panel3Collapsed && (
               <div className="panel-bottom-body">
 
-                {/* Positions */}
+                {/* Positions zone */}
                 <div className="panel-bottom-zone positions-zone">
-                  <div className="panel-bottom-section-title">
-                    Open SET Positions
-                    <TooltipIcon content="Open SET/MAI positions. Commission and transfer fees already deducted from P&L." />
-                  </div>
-                  {setPositions.length === 0 ? (
-                    <div className="empty-state">No open positions. Select a stock and place a buy order.</div>
-                  ) : (
-                    <>
-                      <div className="positions-table">
-                        <div className="pos-row header">
-                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
-                          <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                          <span>Strategy</span>
-                        </div>
-                        {setPositions.map(pos => {
-                          const pnlUp = pos.unrealisedPnL >= 0;
-                          return (
-                            <div key={pos.id} className="pos-row">
-                              <span className="pos-symbol">{pos.symbol?.replace(".BK","")}</span>
-                              <span>{pos.qty?.toLocaleString()}</span>
-                              <span>฿{pos.entryPrice?.toFixed(2)}</span>
-                              <span>฿{pos.currentPrice?.toFixed(2)}</span>
-                              <span className={pnlUp?"pnl-up":"pnl-down"}>
-                                {pnlUp?"+":""}฿{pos.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}
-                              </span>
-                              <span className={pnlUp?"pnl-up":"pnl-down"}>
-                                {pnlUp?"+":""}{pos.unrealisedPnLPct?.toFixed(2)}%
-                              </span>
-                              <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
-                              <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
-                              <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
 
-                      {/* ── Global Sell Desk ── */}
-                      {(() => {
-                        const symPos     = setPositions.filter(p => p.symbol === activeSymbol);
-                        const totalHeld  = symPos.reduce((s, p) => s + p.qty, 0);
-                        const totalCost  = symPos.reduce((s, p) => s + p.totalCost, 0);
-                        const avgEntry   = totalHeld > 0 ? totalCost / totalHeld : 0;
-                        const price      = currentPrice || 0;
-                        const sellN      = parseFloat(sellQty) || 0;
-                        const estPnl     = sellN > 0 ? (price - avgEntry) * sellN : null;
-                        const pnlUp      = estPnl >= 0;
-                        const totalPnl   = symPos.reduce((s,p)=>s+p.unrealisedPnL,0);
-                        if (totalHeld === 0) return <div className="empty-state" style={{fontSize:"11px"}}>Switch to the active symbol to sell.</div>;
-                        return (
-                          <div className="sell-desk">
-                            <div className="sell-desk-summary">
-                              <span><strong>{activeSymbol?.replace(".BK","")}</strong> — {totalHeld?.toLocaleString()} shares</span>
-                              <span>Avg entry <strong>฿{avgEntry?.toFixed(2)}</strong></span>
-                              <span>Now <strong>฿{price?.toFixed(2)}</strong></span>
-                              <span className={totalPnl >= 0 ? "pnl-up" : "pnl-down"}>
-                                P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}
-                              </span>
+                  {/* ── Open / Closed toggle ── */}
+                  <div className="pos-tab-row">
+                    <button
+                      className={`pos-tab-btn ${posTab === "open" ? "active" : ""}`}
+                      onClick={() => setPosTab("open")}
+                    >
+                      Open ({setPositions.length})
+                    </button>
+                    <button
+                      className={`pos-tab-btn ${posTab === "closed" ? "active" : ""}`}
+                      onClick={handleShowClosed}
+                    >
+                      Closed {closedLoading ? "⏳" : ""}
+                    </button>
+                  </div>
+
+                  {/* ── OPEN positions ── */}
+                  {posTab === "open" && (
+                    <>
+                      {setPositions.length === 0 ? (
+                        <div className="empty-state">No open positions. Select a stock and place a buy order.</div>
+                      ) : (
+                        <>
+                          <div className="positions-table">
+                            <div className="pos-row header">
+                              <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
+                              <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
+                              <span>Strategy</span>
                             </div>
-                            <div className="sell-desk-controls">
-                              <input
-                                type="number"
-                                className="sell-desk-input"
-                                value={sellQty}
-                                onChange={e => setSellQty(e.target.value)}
-                                placeholder={`Sell how many? (max ${totalHeld?.toLocaleString()})`}
-                                min={100}
-                                max={totalHeld}
-                                step={100}
-                              />
-                              <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
-                              <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 200) * 100 || 100))}>Half</button>
-                            </div>
-                            {estPnl !== null && (
-                              <div className={`sell-desk-preview ${pnlUp ? "pnl-up" : "pnl-down"}`}>
-                                Sell {sellN?.toLocaleString()} shares → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
-                              </div>
-                            )}
-                            <button
-                              className="sell-desk-btn"
-                              onClick={handleSellDesk}
-                              disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}
-                            >
-                              ▼ SELL {sellQty ? parseInt(sellQty)?.toLocaleString() : "?"} SHARES @ MARKET
-                            </button>
+                            {setPositions.map(pos => {
+                              const pnlUp = pos.unrealisedPnL >= 0;
+                              return (
+                                <div key={pos.id} className="pos-row">
+                                  <span className="pos-symbol">{pos.symbol?.replace(".BK","")}</span>
+                                  <span>{pos.qty?.toLocaleString()}</span>
+                                  <span>฿{pos.entryPrice?.toFixed(2)}</span>
+                                  <span>฿{pos.currentPrice?.toFixed(2)}</span>
+                                  <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}฿{pos.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}</span>
+                                  <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}{pos.unrealisedPnLPct?.toFixed(2)}%</span>
+                                  <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
+                                  <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                                  <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })()}
+
+                          {/* Sell Desk */}
+                          {(() => {
+                            const symPos    = setPositions.filter(p => p.symbol === activeSymbol);
+                            const totalHeld = symPos.reduce((s, p) => s + p.qty, 0);
+                            const totalCost = symPos.reduce((s, p) => s + p.totalCost, 0);
+                            const avgEntry  = totalHeld > 0 ? totalCost / totalHeld : 0;
+                            const price     = currentPrice || 0;
+                            const sellN     = parseFloat(sellQty) || 0;
+                            const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
+                            const pnlUp     = estPnl >= 0;
+                            const totalPnl  = symPos.reduce((s,p)=>s+p.unrealisedPnL,0);
+                            if (totalHeld === 0) return <div className="empty-state" style={{fontSize:"11px"}}>Switch to the active symbol to sell.</div>;
+                            return (
+                              <div className="sell-desk">
+                                <div className="sell-desk-summary">
+                                  <span><strong>{activeSymbol?.replace(".BK","")}</strong> — {totalHeld?.toLocaleString()} shares</span>
+                                  <span>Avg entry <strong>฿{avgEntry?.toFixed(2)}</strong></span>
+                                  <span>Now <strong>฿{price?.toFixed(2)}</strong></span>
+                                  <span className={totalPnl >= 0 ? "pnl-up" : "pnl-down"}>P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}</span>
+                                </div>
+                                <div className="sell-desk-controls">
+                                  <input type="number" className="sell-desk-input" value={sellQty} onChange={e => setSellQty(e.target.value)} placeholder={`Sell how many? (max ${totalHeld?.toLocaleString()})`} min={100} max={totalHeld} step={100} />
+                                  <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
+                                  <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 200) * 100 || 100))}>Half</button>
+                                </div>
+                                {estPnl !== null && (
+                                  <div className={`sell-desk-preview ${pnlUp ? "pnl-up" : "pnl-down"}`}>
+                                    Sell {sellN?.toLocaleString()} shares → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
+                                  </div>
+                                )}
+                                <button className="sell-desk-btn" onClick={handleSellDesk} disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}>
+                                  ▼ SELL {sellQty ? parseInt(sellQty)?.toLocaleString() : "?"} SHARES @ MARKET
+                                </button>
+                              </div>
+                            );
+                          })()}
+                        </>
+                      )}
                     </>
                   )}
+
+                  {/* ── CLOSED positions from D1 ── */}
+                  {posTab === "closed" && (
+                    <>
+                      {closedLoading ? (
+                        <div className="empty-state">⏳ Loading closed trades...</div>
+                      ) : closedD1.length === 0 ? (
+                        <div className="empty-state">No closed trades found in history.</div>
+                      ) : (
+                        <div className="positions-table">
+                          <div className="pos-row header">
+                            <span>Symbol</span><span>Qty</span><span>Entry</span><span>Exit</span>
+                            <span>P&L</span><span>Strategy</span><span>Closed</span>
+                          </div>
+                          {closedD1.map(t => {
+                            const pnlUp = (t.pnl || 0) >= 0;
+                            return (
+                              <div key={t.id} className="pos-row">
+                                <span className="pos-symbol">{t.symbol?.replace(".BK","")}</span>
+                                <span>{t.qty?.toLocaleString()}</span>
+                                <span>฿{parseFloat(t.entry_price)?.toFixed(2)}</span>
+                                <span>{t.exit_price ? `฿${parseFloat(t.exit_price)?.toFixed(2)}` : "—"}</span>
+                                <span className={pnlUp?"pnl-up":"pnl-down"}>
+                                  {t.pnl != null ? `${pnlUp?"+":""}฿${Math.round(t.pnl)?.toLocaleString()}` : "—"}
+                                </span>
+                                <span className="pos-strategy">{t.strategy !== "manual" ? `🤖 ${t.strategy}` : "—"}</span>
+                                <span style={{fontSize:"10px",color:"var(--text-muted)"}}>
+                                  {t.closed_at ? new Date(t.closed_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+
                 </div>
 
                 {/* Activity Log */}
@@ -428,14 +463,12 @@ export default function SetMarket({
                     Activity Log — SET
                     <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade. Grouped by hour." />
                     {setEventsCount > 0 && (
-                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__set")}>
-                        Clear
-                      </button>
+                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__set")}>Clear</button>
                     )}
                   </div>
-                 <ActivityLog
-                    events={activityEvents.filter(e => e.market === "gold")}
-                    onClear={() => onActivityEvent?.("__clear__gold")}
+                  <ActivityLog
+                    events={activityEvents.filter(e => e.market === "set")}
+                    onClear={() => onActivityEvent?.("__clear__set")}
                     onLoadMore={onLoadMoreLogs}
                     logLoading={logLoading}
                     logHasMore={logHasMore}
@@ -447,7 +480,7 @@ export default function SetMarket({
           </div>
         </div>
 
-        {/* Right column — Order + Strategy, full height scroll */}
+        {/* Right column */}
         <div className="panel-controls">
           <OrderPanel
             market="set"
@@ -473,23 +506,22 @@ export default function SetMarket({
             stagePnl={stagePnl} setStagePnl={setStagePnl}
           />
 
-          {/* StrategyPanel only shows when Manual tab is active */}
           {orderMode === "manual" && (
             <StrategyPanel
-            market="set"
-            symbol={activeSymbol}
-            priceHistory={priceHistory}
-            currentPrice={currentPrice}
-            portfolio={portfolio}
-            activeStrategy={activeStrategy}
-            onStrategyChange={onStrategyChange}
-            autoExecute={autoExecute}
-            onAutoExecuteChange={onAutoExecuteChange}
-            onExecuteBuy={handleStrategyBuy}
-            onExecuteSell={handleStrategySell}
-            onStrategyEvent={handleStrategyEvent}
-            aiWorkflowActive={aiWorkflowActive}
-          />
+              market="set"
+              symbol={activeSymbol}
+              priceHistory={priceHistory}
+              currentPrice={currentPrice}
+              portfolio={portfolio}
+              activeStrategy={activeStrategy}
+              onStrategyChange={onStrategyChange}
+              autoExecute={autoExecute}
+              onAutoExecuteChange={onAutoExecuteChange}
+              onExecuteBuy={handleStrategyBuy}
+              onExecuteSell={handleStrategySell}
+              onStrategyEvent={handleStrategyEvent}
+              aiWorkflowActive={aiWorkflowActive}
+            />
           )}
         </div>
       </div>
