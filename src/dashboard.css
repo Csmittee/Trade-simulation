@@ -1467,3 +1467,49 @@ a { color: var(--gold); }
   border-left: 2px solid var(--border);
   margin-left: 8px;
 }
+/* ── Activity Log — Phase 5 additions ── */
+.activity-load-more-btn {
+  display: block;
+  width: 100%;
+  padding: 6px 0;
+  background: rgba(96,165,250,0.08);
+  border: 1px solid rgba(96,165,250,0.2);
+  border-radius: 4px;
+  color: #60a5fa;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 6px;
+  transition: background 0.15s;
+}
+.activity-load-more-btn:hover:not(:disabled) {
+  background: rgba(96,165,250,0.16);
+}
+.activity-load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.activity-away-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  margin: 4px 0;
+}
+.away-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(245,158,11,0.3);
+}
+.away-label {
+  font-size: 10px;
+  color: var(--gold);
+  opacity: 0.7;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.activity-row.from-d1 {
+  opacity: 0.75;
+}
