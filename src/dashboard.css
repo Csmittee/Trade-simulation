@@ -1391,3 +1391,79 @@ a { color: var(--gold); }
 }
 .sell-desk-btn:hover:not(:disabled) { opacity: 0.85; }
 .sell-desk-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Panel Bottom Split Scroll Layout ───────────────────────────────────────── */
+/* Replaces .panel-bottom-scroll with two independent zones */
+.panel-bottom-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.panel-bottom-zone {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.positions-zone {
+  flex: 0 0 auto;          /* fixed height — grows with content up to max */
+  max-height: 260px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.log-zone {
+  flex: 1 1 0;             /* fills remaining height */
+  min-height: 120px;
+  overflow-y: auto;
+  padding-top: 4px;
+}
+
+/* ── Hourly Activity Log Groups ─────────────────────────────────────────────── */
+.activity-hour-group {
+  margin-bottom: 4px;
+}
+.activity-hour-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.activity-hour-header:hover { background: var(--bg-hover); }
+.activity-hour-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--gold);
+  min-width: 36px;
+}
+.activity-hour-summary {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ah-buy   { color: var(--green); font-weight: 600; }
+.ah-sell  { color: var(--red);   font-weight: 600; }
+.ah-block { color: var(--text-muted); }
+.ah-pnl   { font-weight: 700; font-family: var(--font-mono); }
+.ah-pnl.up   { color: var(--green); }
+.ah-pnl.down { color: var(--red);   }
+.activity-hour-toggle {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.activity-hour-events {
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid var(--border);
+  margin-left: 8px;
+}
