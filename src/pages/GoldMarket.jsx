@@ -14,6 +14,7 @@ import StrategyPanel from "../components/StrategyPanel.jsx";
 import ActivityLog   from "../components/ActivityLog.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useGoldMarket } from "../injectors/gold-injector.js";
+import { useFetchIntel } from "../injectors/intel-injector.js";
 import { calcPortfolioSummary, calcHourlyPnL } from "../core/portfolio-engine.js";
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
@@ -49,7 +50,7 @@ export default function GoldMarket({
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
   const [orderMode,       setOrderMode]       = useState("manual"); // "manual" | "ai"
-
+  const fetchIntel = useFetchIntel();
   const {
     goldData, priceHistory, loading, error, partial,
     lastUpdated, historyLoading, marketOpen,
@@ -193,14 +194,11 @@ export default function GoldMarket({
 
           {/* Chart — scrollable, fills available height */}
           <div className="panel-chart">
-            <ChartPanel
-              data={priceHistory}
-              symbol={activeSymbol}
-              market="gold"
-              timeframe={timeframe}
-              historyLoading={historyLoading}
-              onTimeframeChange={setTimeframe}
-              onIntelRequest={fetchIntel}
+            <OrderPanel
+              ...existing props...
+              recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
+              selectedSymbol="THAI_GOLD_BAHT"
+              onLogActivity={onActivityEvent}
             />
 
             {hourlyPnL.length > 0 && (
@@ -334,6 +332,9 @@ export default function GoldMarket({
             onAIStrategy={onAIStrategy}
             orderMode={orderMode}
             onOrderModeChange={setOrderMode}
+            recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
+            selectedSymbol="THAI_GOLD_BAHT"
+            onLogActivity={onActivityEvent}
           />
 
           {/* StrategyPanel only shows when Manual tab is active */}
