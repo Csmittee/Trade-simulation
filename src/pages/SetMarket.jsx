@@ -64,9 +64,12 @@ export default function SetMarket({
   setPortfolio,
   enforceHours,
   onAIStrategy,
+  
   // Phase 4 — lifted from local state into Dashboard
   activeStrategy,
   onStrategyChange,
+  autoExecute,           // ← ADD
+  onAutoExecuteChange,   // ← ADD
   // Phase 4 — activity log
   activityEvents,
   onActivityEvent,
@@ -470,18 +473,20 @@ export default function SetMarket({
           {/* StrategyPanel only shows when Manual tab is active */}
           {orderMode === "manual" && (
             <StrategyPanel
-              market="set"
-              symbol={activeSymbol}
-              priceHistory={priceHistory}
-              currentPrice={currentPrice}
-              portfolio={portfolio}
-              activeStrategy={activeStrategy}
-              onStrategyChange={onStrategyChange}
-              onExecuteBuy={handleStrategyBuy}
-              onExecuteSell={handleStrategySell}
-              onStrategyEvent={handleStrategyEvent}
-              aiWorkflowActive={aiWorkflowActive}
-            />
+            market="set"
+            symbol={activeSymbol}
+            priceHistory={priceHistory}
+            currentPrice={currentPrice}
+            portfolio={portfolio}
+            activeStrategy={activeStrategy}
+            onStrategyChange={onStrategyChange}
+            autoExecute={autoExecute}
+            onAutoExecuteChange={onAutoExecuteChange}
+            onExecuteBuy={handleStrategyBuy}
+            onExecuteSell={handleStrategySell}
+            onStrategyEvent={handleStrategyEvent}
+            aiWorkflowActive={aiWorkflowActive}
+          />
           )}
         </div>
       </div>
