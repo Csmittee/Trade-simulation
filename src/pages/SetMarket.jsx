@@ -433,9 +433,12 @@ export default function SetMarket({
                       </button>
                     )}
                   </div>
-                  <ActivityLog
-                    events={activityEvents.filter(e => e.market === "set")}
-                    onClear={() => onActivityEvent?.("__clear__set")}
+                 <ActivityLog
+                    events={activityEvents.filter(e => e.market === "gold")}
+                    onClear={() => onActivityEvent?.("__clear__gold")}
+                    onLoadMore={onLoadMoreLogs}
+                    logLoading={logLoading}
+                    logHasMore={logHasMore}
                   />
                 </div>
 
