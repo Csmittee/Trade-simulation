@@ -14,7 +14,6 @@
 import { useState, useEffect, useRef } from "react";
 import Tooltip, { TooltipIcon } from "./Tooltip.jsx";
 import { suggestPositionSize, getRiskLabel, calcPortfolioSummary } from "../core/portfolio-engine.js";
-import { makeActivityEvent } from "./ActivityLog.jsx";
 
 const WORKER_BASE = "https://tts-workers.csmittee.workers.dev";
 
@@ -45,15 +44,6 @@ export default function OrderPanel({
   recentCloses = [],   // last 10 closes passed from market page
   selectedSymbol = "", // e.g. "PTT.BK" or "THAI_GOLD_BAHT"
   onLogActivity,       // optional — logs to ActivityLog
-  aiWorkflowActive = false, // BUG003
-  // Lifted workflow state (BUG002)
-  workflow, setWorkflow,
-  stageStatuses, setStageStatuses,
-  activeStageIdx, setActiveStageIdx,
-  consecutiveRed, setConsecutiveRed,
-  workflowDone, setWorkflowDone,
-  fallbackTriggered, setFallbackTriggered,
-  stagePnl, setStagePnl,
 }) {
   // Manual tab state
   const [side, setSide]             = useState("buy");
@@ -65,11 +55,18 @@ export default function OrderPanel({
   const [error, setError]           = useState(null);
   const [warning, setWarning]       = useState(null);
 
-  // AI tab local-only state (OK to reset on tab switch)
-  const [aiPrompt, setAiPrompt]           = useState("");
-  const [aiLoading, setAiLoading]         = useState(false);
-  const [aiError, setAiError]             = useState(null);
-  const [chatCollapsed, setChatCollapsed] = useState(false);
+  // AI tab state
+  const [aiPrompt, setAiPrompt]         = useState("");
+  const [aiLoading, setAiLoading]       = useState(false);
+  const [aiError, setAiError]           = useState(null);
+  const [workflow, setWorkflow]         = useState(null);      // built workflow object
+  const [chatCollapsed, setChatCollapsed] = useState(false);   // collapse chat after workflow built
+  const [stageStatuses, setStageStatuses] = useState([]);      // per-stage status
+  const [activeStageIdx, setActiveStageIdx] = useState(0);
+  const [consecutiveRed, setConsecutiveRed] = useState(0);
+  const [workflowDone, setWorkflowDone]     = useState(false);
+  const [fallbackTriggered, setFallbackTriggered] = useState(false);
+  const [stagePnl, setStagePnl]             = useState([]);    // actual ฿ result per stage (filled after done)
   const workflowRef = useRef(null);
 
   useEffect(() => {
@@ -115,13 +112,13 @@ export default function OrderPanel({
       const result = onBuy({ symbol: sym, market, qty: q, price: p, stopLoss: parseFloat(stopLoss) || null, takeProfit: parseFloat(takeProfit) || null, strategy: "manual", simMode });
       if (result?.error) { setError(`Order rejected: ${result.error}`); return; }
       if (result?.warning) setWarning(result.warning);
-      onLogActivity?.(makeActivityEvent({ type: "buy", market, symbol: sym, price: p, detail: `Manual buy × ${q} @ ฿${p?.toLocaleString()}` }));
+      onLogActivity?.({ type: "buy", market, symbol: sym, price: p, detail: `Manual buy × ${q} @ ฿${p?.toLocaleString()}` });
       setQty(""); setStopLoss(""); setTakeProfit("");
     } else {
       const p = parseFloat(price);
       const result = onSell(null, p);
       if (result?.error) { setError(result.error); return; }
-      onLogActivity?.(makeActivityEvent({ type: "sell", market, symbol: selectedSymbol || (market === "gold" ? "THAI_GOLD_BAHT" : ""), price: p, detail: `Manual sell @ ฿${p?.toLocaleString()}` }));
+      onLogActivity?.({ type: "sell", market, symbol: selectedSymbol || market, price: p, detail: `Manual sell @ ฿${p?.toLocaleString()}` });
     }
   }
 
@@ -154,7 +151,7 @@ export default function OrderPanel({
       setStageStatuses(wf.stages.map((_, i) => (i === 0 ? STATUS.ACTIVE : STATUS.PENDING)));
       setStagePnl(wf.stages.map(() => null));
       setChatCollapsed(true);
-      onLogActivity?.(makeActivityEvent({ type: "info", market, symbol: selectedSymbol, detail: `✦ AI Workflow built: "${wf.workflowName}" — ${wf.stages.length} stages` }));
+      onLogActivity?.({ type: "info", market, message: `✦ AI Workflow built: "${wf.workflowName}" — ${wf.stages.length} stages` });
     } catch (err) {
       setAiError(err.message);
     } finally {
@@ -512,63 +509,68 @@ export default function OrderPanel({
             <input type="number" className="field-input" value={price} onChange={e => setPrice(e.target.value)} placeholder={currentPrice?.toFixed(2)} step="0.01" />
           </div>
 
-          <div className="field-row">
-            <label className="field-label">Quantity ({market === "gold" ? "baht-weight" : "shares"})<TooltipIcon id="tooltip-order-qty" /></label>
-            <div className="qty-row">
-              <input type="number" className="field-input" value={qty} onChange={e => setQty(e.target.value)} placeholder={`min ${market === "gold" ? 1 : 100}`} min={market === "gold" ? 1 : 100} step={market === "gold" ? 1 : 100} />
-              <button className="suggest-btn" onClick={handleSuggestSize}>Auto Size</button>
-            </div>
-            <div className="risk-level-select">
-              {["low","medium","high"].map(lvl => (
-                <button key={lvl} className={`risk-btn ${riskLevel === lvl ? "active" : ""} ${lvl}`} onClick={() => setRiskLevel(lvl)}>{lvl}</button>
-              ))}
-            </div>
-          </div>
+          {side === "buy" && (
+            <>
+              <div className="field-row">
+                <label className="field-label">Quantity ({market === "gold" ? "baht-weight" : "shares"})<TooltipIcon id="tooltip-order-qty" /></label>
+                <div className="qty-row">
+                  <input type="number" className="field-input" value={qty} onChange={e => setQty(e.target.value)} placeholder={`min ${market === "gold" ? 1 : 100}`} min={market === "gold" ? 1 : 100} step={market === "gold" ? 1 : 100} />
+                  <button className="suggest-btn" onClick={handleSuggestSize}>Auto Size</button>
+                </div>
+                <div className="risk-level-select">
+                  {["low","medium","high"].map(lvl => (
+                    <button key={lvl} className={`risk-btn ${riskLevel === lvl ? "active" : ""} ${lvl}`} onClick={() => setRiskLevel(lvl)}>{lvl}</button>
+                  ))}
+                </div>
+              </div>
 
-          <div className="field-row">
-            <label className="field-label">Stop Loss<TooltipIcon id="tooltip-order-stoploss" /></label>
-            <input type="number" className="field-input" value={stopLoss} onChange={e => setStopLoss(e.target.value)} placeholder="Optional — auto-closes if price falls here" step="0.01" />
-          </div>
+              <div className="field-row">
+                <label className="field-label">Stop Loss<TooltipIcon id="tooltip-order-stoploss" /></label>
+                <input type="number" className="field-input" value={stopLoss} onChange={e => setStopLoss(e.target.value)} placeholder="Optional — auto-closes if price falls here" step="0.01" />
+              </div>
 
-          <div className="field-row">
-            <label className="field-label">Take Profit<TooltipIcon id="tooltip-order-takeprofit" /></label>
-            <input type="number" className="field-input" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} placeholder="Optional — auto-closes if price rises here" step="0.01" />
-          </div>
+              <div className="field-row">
+                <label className="field-label">Take Profit<TooltipIcon id="tooltip-order-takeprofit" /></label>
+                <input type="number" className="field-input" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} placeholder="Optional — auto-closes if price rises here" step="0.01" />
+              </div>
 
-          {tradeCost > 0 && (
-            <div className="order-summary">
-              <span>Est. Cost: <strong>฿{tradeCost.toLocaleString()}</strong></span>
-              {riskLabel && (
-                <span style={{ color: riskLabel === "low" ? "#22c55e" : riskLabel === "medium" ? "#f59e0b" : "#ef4444" }}>
-                  Risk: {riskLabel.toUpperCase()}<TooltipIcon id={`tooltip-risk-${riskLabel}`} />
-                </span>
+              {tradeCost > 0 && (
+                <div className="order-summary">
+                  <span>Est. Cost: <strong>฿{tradeCost.toLocaleString()}</strong></span>
+                  {riskLabel && (
+                    <span style={{ color: riskLabel === "low" ? "#22c55e" : riskLabel === "medium" ? "#f59e0b" : "#ef4444" }}>
+                      Risk: {riskLabel.toUpperCase()}<TooltipIcon id={`tooltip-risk-${riskLabel}`} />
+                    </span>
+                  )}
+                </div>
               )}
-            </div>
+
+              {(() => {
+                const q = parseFloat(qty)||0, p = parseFloat(price)||0, sl = parseFloat(stopLoss)||0, tp = parseFloat(takeProfit)||0;
+                if (!q || !p) return null;
+                const maxLoss = sl > 0 ? ((sl-p)*q).toFixed(0) : null;
+                const maxGain = tp > 0 ? ((tp-p)*q).toFixed(0) : null;
+                if (!maxLoss && !maxGain) return null;
+                return (
+                  <div className="pnl-helper">
+                    <span className="pnl-helper-title">P&L at targets</span>
+                    {maxLoss !== null && <span className="pnl-loss">Max loss: ฿{parseInt(maxLoss).toLocaleString()}{sl > 0 && <span className="pnl-sub"> if hits ฿{sl.toLocaleString()}</span>}</span>}
+                    {maxGain !== null && <span className="pnl-gain">Max gain: +฿{parseInt(maxGain).toLocaleString()}{tp > 0 && <span className="pnl-sub"> if hits ฿{tp.toLocaleString()}</span>}</span>}
+                  </div>
+                );
+              })()}
+            </>
           )}
 
-          {(() => {
-            const q = parseFloat(qty)||0, p = parseFloat(price)||0, sl = parseFloat(stopLoss)||0, tp = parseFloat(takeProfit)||0;
-            if (!q || !p) return null;
-            const maxLoss = sl > 0 ? ((sl-p)*q).toFixed(0) : null;
-            const maxGain = tp > 0 ? ((tp-p)*q).toFixed(0) : null;
-            if (!maxLoss && !maxGain) return null;
-            return (
-              <div className="pnl-helper">
-                <span className="pnl-helper-title">P&L at targets</span>
-                {maxLoss !== null && <span className="pnl-loss">Max loss: ฿{parseInt(maxLoss).toLocaleString()}{sl > 0 && <span className="pnl-sub"> if hits ฿{sl.toLocaleString()}</span>}</span>}
-                {maxGain !== null && <span className="pnl-gain">Max gain: +฿{parseInt(maxGain).toLocaleString()}{tp > 0 && <span className="pnl-sub"> if hits ฿{tp.toLocaleString()}</span>}</span>}
-              </div>
-            );
-          })()}
+          {side === "sell" && (
+            <div className="order-warning" style={{ textAlign: "center", lineHeight: "1.6" }}>
+              ℹ To close a position, use the <strong>Close</strong> button on the position row below the chart.<br />
+              <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Positions are closed FIFO automatically via Stop Loss / Take Profit, or manually per row.</span>
+            </div>
+          )}
 
           {error   && <div className="order-error">⚠ {error}</div>}
           {warning && <div className="order-warning">⚡ {warning}</div>}
-
-          {aiWorkflowActive && (
-            <div className="order-warning" style={{ background: "rgba(245,158,11,0.15)", border: "1px solid var(--gold)", color: "var(--gold)", fontWeight: 700, textAlign: "center" }}>
-              ✦ AI Workflow active — manual trading locked
-            </div>
-          )}
 
           <div className={`market-status ${statusClass}`}>
             <span>{statusLabel}</span>
@@ -576,9 +578,11 @@ export default function OrderPanel({
             {!simMode && !marketOpen && <span className="sim-mode-note">{closedHint}</span>}
           </div>
 
-          <button className={`submit-btn ${side}`} onClick={handleSubmit} disabled={!canTrade || aiWorkflowActive}>
-            {aiWorkflowActive ? "⊘ AI WORKFLOW ACTIVE" : !canTrade ? "⊘ MARKET CLOSED" : side === "buy" ? `▲ ${simMode?"[SIM] ":""}PLACE BUY ORDER` : `▼ ${simMode?"[SIM] ":""}CLOSE POSITION`}
-          </button>
+          {side === "buy" && (
+            <button className={`submit-btn ${side}`} onClick={handleSubmit} disabled={!canTrade}>
+              {!canTrade ? "⊘ MARKET CLOSED" : `▲ ${simMode?"[SIM] ":""}PLACE BUY ORDER`}
+            </button>
+          )}
         </>
       )}
     </div>
