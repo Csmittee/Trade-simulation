@@ -14,6 +14,7 @@
 import { useState, useEffect, useRef } from "react";
 import Tooltip, { TooltipIcon } from "./Tooltip.jsx";
 import { suggestPositionSize, getRiskLabel, calcPortfolioSummary } from "../core/portfolio-engine.js";
+import { makeActivityEvent } from "./ActivityLog.jsx";
 
 const WORKER_BASE = "https://tts-workers.csmittee.workers.dev";
 
@@ -44,6 +45,15 @@ export default function OrderPanel({
   recentCloses = [],   // last 10 closes passed from market page
   selectedSymbol = "", // e.g. "PTT.BK" or "THAI_GOLD_BAHT"
   onLogActivity,       // optional — logs to ActivityLog
+  aiWorkflowActive = false, // BUG003
+  // Lifted workflow state (BUG002)
+  workflow, setWorkflow,
+  stageStatuses, setStageStatuses,
+  activeStageIdx, setActiveStageIdx,
+  consecutiveRed, setConsecutiveRed,
+  workflowDone, setWorkflowDone,
+  fallbackTriggered, setFallbackTriggered,
+  stagePnl, setStagePnl,
 }) {
   // Manual tab state
   const [side, setSide]             = useState("buy");
@@ -55,18 +65,11 @@ export default function OrderPanel({
   const [error, setError]           = useState(null);
   const [warning, setWarning]       = useState(null);
 
-  // AI tab state
-  const [aiPrompt, setAiPrompt]         = useState("");
-  const [aiLoading, setAiLoading]       = useState(false);
-  const [aiError, setAiError]           = useState(null);
-  const [workflow, setWorkflow]         = useState(null);      // built workflow object
-  const [chatCollapsed, setChatCollapsed] = useState(false);   // collapse chat after workflow built
-  const [stageStatuses, setStageStatuses] = useState([]);      // per-stage status
-  const [activeStageIdx, setActiveStageIdx] = useState(0);
-  const [consecutiveRed, setConsecutiveRed] = useState(0);
-  const [workflowDone, setWorkflowDone]     = useState(false);
-  const [fallbackTriggered, setFallbackTriggered] = useState(false);
-  const [stagePnl, setStagePnl]             = useState([]);    // actual ฿ result per stage (filled after done)
+  // AI tab local-only state (OK to reset on tab switch)
+  const [aiPrompt, setAiPrompt]           = useState("");
+  const [aiLoading, setAiLoading]         = useState(false);
+  const [aiError, setAiError]             = useState(null);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const workflowRef = useRef(null);
 
   useEffect(() => {
@@ -112,13 +115,13 @@ export default function OrderPanel({
       const result = onBuy({ symbol: sym, market, qty: q, price: p, stopLoss: parseFloat(stopLoss) || null, takeProfit: parseFloat(takeProfit) || null, strategy: "manual", simMode });
       if (result?.error) { setError(`Order rejected: ${result.error}`); return; }
       if (result?.warning) setWarning(result.warning);
-      onLogActivity?.({ type: "buy", market, symbol: sym, price: p, detail: `Manual buy × ${q} @ ฿${p?.toLocaleString()}` });
+      onLogActivity?.(makeActivityEvent({ type: "buy", market, symbol: sym, price: p, detail: `Manual buy × ${q} @ ฿${p?.toLocaleString()}` }));
       setQty(""); setStopLoss(""); setTakeProfit("");
     } else {
       const p = parseFloat(price);
       const result = onSell(null, p);
       if (result?.error) { setError(result.error); return; }
-      onLogActivity?.({ type: "sell", market, symbol: selectedSymbol || market, price: p, detail: `Manual sell @ ฿${p?.toLocaleString()}` });
+      onLogActivity?.(makeActivityEvent({ type: "sell", market, symbol: selectedSymbol || (market === "gold" ? "THAI_GOLD_BAHT" : ""), price: p, detail: `Manual sell @ ฿${p?.toLocaleString()}` }));
     }
   }
 
@@ -151,7 +154,7 @@ export default function OrderPanel({
       setStageStatuses(wf.stages.map((_, i) => (i === 0 ? STATUS.ACTIVE : STATUS.PENDING)));
       setStagePnl(wf.stages.map(() => null));
       setChatCollapsed(true);
-      onLogActivity?.({ type: "info", market, message: `✦ AI Workflow built: "${wf.workflowName}" — ${wf.stages.length} stages` });
+      onLogActivity?.(makeActivityEvent({ type: "info", market, symbol: selectedSymbol, detail: `✦ AI Workflow built: "${wf.workflowName}" — ${wf.stages.length} stages` }));
     } catch (err) {
       setAiError(err.message);
     } finally {
@@ -561,14 +564,20 @@ export default function OrderPanel({
           {error   && <div className="order-error">⚠ {error}</div>}
           {warning && <div className="order-warning">⚡ {warning}</div>}
 
+          {aiWorkflowActive && (
+            <div className="order-warning" style={{ background: "rgba(245,158,11,0.15)", border: "1px solid var(--gold)", color: "var(--gold)", fontWeight: 700, textAlign: "center" }}>
+              ✦ AI Workflow active — manual trading locked
+            </div>
+          )}
+
           <div className={`market-status ${statusClass}`}>
             <span>{statusLabel}</span>
             {simMode && <span className="sim-mode-note">Market Hours OFF — prices are live but hours not enforced</span>}
             {!simMode && !marketOpen && <span className="sim-mode-note">{closedHint}</span>}
           </div>
 
-          <button className={`submit-btn ${side}`} onClick={handleSubmit} disabled={!canTrade}>
-            {!canTrade ? "⊘ MARKET CLOSED" : side === "buy" ? `▲ ${simMode?"[SIM] ":""}PLACE BUY ORDER` : `▼ ${simMode?"[SIM] ":""}CLOSE POSITION`}
+          <button className={`submit-btn ${side}`} onClick={handleSubmit} disabled={!canTrade || aiWorkflowActive}>
+            {aiWorkflowActive ? "⊘ AI WORKFLOW ACTIVE" : !canTrade ? "⊘ MARKET CLOSED" : side === "buy" ? `▲ ${simMode?"[SIM] ":""}PLACE BUY ORDER` : `▼ ${simMode?"[SIM] ":""}CLOSE POSITION`}
           </button>
         </>
       )}

@@ -110,6 +110,7 @@ export default function StrategyPanel({
   onExecuteSell,
   onStrategyEvent,
   symbol,
+  aiWorkflowActive = false, // BUG003
 }) {
   const [signal,        setSignal]        = useState(null);
   const [pendingTrade,  setPendingTrade]  = useState(null);
@@ -146,6 +147,7 @@ export default function StrategyPanel({
 
     // ── Auto Execute ON → always surface card ──────────────────────────────
     if (autoExecute) {
+      if (aiWorkflowActive) return; // BUG003 — AI workflow takes priority
       setLastSignalId(sigId);
       const qty        = suggestPositionSize(portfolio?.balance || 0, currentPrice, result.suggestedStop, "medium", market);
       const tradeValue = qty * currentPrice;
@@ -430,6 +432,13 @@ export default function StrategyPanel({
             <div className="signal-waiting">Select a strategy above to start monitoring.</div>
           )}
 
+          {/* ── BUG003 — AI Workflow lock banner ── */}
+          {aiWorkflowActive && (
+            <div style={{ padding: "8px 10px", background: "rgba(245,158,11,0.12)", border: "1px solid var(--gold)", borderRadius: "4px", fontSize: "11px", fontWeight: 700, color: "var(--gold)", textAlign: "center" }}>
+              ✦ AI Workflow active — preset strategies locked
+            </div>
+          )}
+
           {/* ── Confirm Card ── */}
           {pendingTrade && (
             <div className={`trade-confirm ${tierCardClass(pendingTrade.tier)}`}>
@@ -475,7 +484,7 @@ export default function StrategyPanel({
               )}
 
               <div className="confirm-actions">
-                <button className="confirm-btn confirm-yes" onClick={handleConfirm}>✓ Execute</button>
+                <button className="confirm-btn confirm-yes" onClick={handleConfirm} disabled={aiWorkflowActive}>✓ Execute</button>
                 <button className="confirm-btn confirm-no"  onClick={handleDismiss}>✗ Dismiss</button>
               </div>
             </div>
