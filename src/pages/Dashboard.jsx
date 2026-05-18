@@ -1,10 +1,21 @@
 /**
  * Dashboard.jsx
- * Master shell — header, tab navigation, global state, balance reset.
- * Imports market pages and passes shared portfolio state down.
+ * Phase 5 — Session persistence: strategy state, autoExecute, workflow,
+ *            all survive tab switch, Ctrl+Shift+R, browser swap.
+ * Only a manual Reset button wipe clears the state.
+ *
+ * Changes from Phase 4:
+ * - autoExecute lifted here from StrategyPanel (was local state)
+ * - All strategy + workflow state persisted to KV on every change
+ * - KV restore on load covers: activeStrategy, autoExecute, workflow,
+ *   stageStatuses, activeStageIdx, consecutiveRed, workflowDone,
+ *   fallbackTriggered, stagePnl
+ * - handleActivityEvent now also writes to D1 via /api/logs
+ * - activityEvents loaded from D1 on mount (last 12 hrs)
+ * - loadMoreLogs() fetches 12 hrs further back per call
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import GoldMarket from "./GoldMarket.jsx";
 import SetMarket  from "./SetMarket.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
@@ -12,32 +23,84 @@ import { createPortfolio, resetPortfolio, calcPortfolioSummary, isMarketOpen } f
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import config from "../../config.js";
 
-// ── KV persistence helpers (calls /api/portfolio Worker) ─────────────────────
-const WORKER_PORTFOLIO = config.workers.base + config.workers.routes.portfolio;
-const WORKER_SETTINGS  = config.workers.base + config.workers.routes.settings;
+const WORKER_BASE      = config.workers.base;
+const WORKER_PORTFOLIO = WORKER_BASE + config.workers.routes.portfolio;
+const WORKER_SETTINGS  = WORKER_BASE + config.workers.routes.settings;
+const WORKER_LOGS      = WORKER_BASE + config.workers.routes.logs;
 
-async function kvGet(key) {
+// ── KV helpers ────────────────────────────────────────────────────────────────
+async function kvGetPortfolio() {
   try {
-    const res = await fetch(`${WORKER_PORTFOLIO}?key=${key}`);
+    const res  = await fetch(WORKER_PORTFOLIO);
     const json = await res.json();
     return json.success ? json.data : null;
   } catch { return null; }
 }
 
-async function kvSet(key, value) {
+async function kvSetPortfolio(value) {
   try {
     await fetch(WORKER_PORTFOLIO, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value }),
+      body:    JSON.stringify({ value }),
     });
-  } catch { /* silent fail — state still in memory */ }
+  } catch { /* silent */ }
+}
+
+async function kvGetSetting(key) {
+  try {
+    const res  = await fetch(`${WORKER_SETTINGS}?key=${encodeURIComponent(key)}`);
+    const json = await res.json();
+    return json.success ? json.data : null;
+  } catch { return null; }
+}
+
+async function kvSetSetting(key, value) {
+  try {
+    await fetch(WORKER_SETTINGS, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ key, value: typeof value === "string" ? value : JSON.stringify(value) }),
+    });
+  } catch { /* silent */ }
+}
+
+// ── D1 activity log helpers ───────────────────────────────────────────────────
+async function d1PostLog(event) {
+  try {
+    await fetch(WORKER_LOGS, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        id:        event.id,
+        type:      event.type      || "info",
+        market:    event.market    || "system",
+        message:   event.message   || event.text || "",
+        detail:    event.detail    || "",
+        pnl:       event.pnl       ?? null,
+        strategy:  event.strategy  || null,
+        logged_at: event.time instanceof Date
+          ? event.time.toISOString()
+          : new Date().toISOString(),
+      }),
+    });
+  } catch { /* silent — log lives in memory anyway */ }
+}
+
+async function d1GetLogs(before = null, limitHours = 12) {
+  try {
+    const url = new URL(WORKER_LOGS);
+    url.searchParams.set("hours", limitHours);
+    if (before) url.searchParams.set("before", before);
+    const res  = await fetch(url.toString());
+    const json = await res.json();
+    return json.success ? json.data : [];
+  } catch { return []; }
 }
 
 // ── Balance Setup Modal ───────────────────────────────────────────────────────
 function BalanceModal({ onConfirm }) {
   const [amount, setAmount] = useState(config.app.defaultBalance.toString());
-
   return (
     <div className="modal-overlay">
       <div className="modal-box">
@@ -76,7 +139,6 @@ function BalanceModal({ onConfirm }) {
 // ── Reset Confirm Dialog ──────────────────────────────────────────────────────
 function ResetDialog({ balance, onConfirm, onCancel }) {
   const [newAmount, setNewAmount] = useState(balance.toString());
-
   return (
     <div className="modal-overlay">
       <div className="modal-box reset-dialog">
@@ -118,20 +180,32 @@ const TABS = [
   { key: "portfolio", label: "Portfolio", icon: "💼" },
 ];
 
+// KV keys for strategy persistence
+const KV = {
+  STRATEGY:        "settings:activeStrategy",
+  AUTO_EXECUTE:    "settings:autoExecute",
+  WORKFLOW:        "settings:workflow",
+  STAGE_STATUSES:  "settings:workflowStages",
+  STAGE_IDX:       "settings:workflowStageIdx",
+  CONSEC_RED:      "settings:consecutiveRed",
+  WORKFLOW_DONE:   "settings:workflowDone",
+  FALLBACK:        "settings:fallbackTriggered",
+  STAGE_PNL:       "settings:stagePnl",
+  ENFORCE_HOURS:   "settings:enforce_hours",
+};
+
 export default function Dashboard() {
-  const [portfolio, setPortfolio]       = useState(null);
-  const [activeTab, setActiveTab]       = useState("gold");
-  const [enforceHours, setEnforceHours] = useState(true);
-  const [showReset, setShowReset]       = useState(false);
-  const [bootstrapped, setBootstrapped] = useState(false);
+  const [portfolio,     setPortfolio]     = useState(null);
+  const [activeTab,     setActiveTab]     = useState("gold");
+  const [enforceHours,  setEnforceHours]  = useState(true);
+  const [showReset,     setShowReset]     = useState(false);
+  const [bootstrapped,  setBootstrapped]  = useState(false);
 
-  // ── Lifted: activeStrategy (BUG001) ──────────────────────────────────────
+  // ── Strategy state (lifted from StrategyPanel — BUG001 + Phase 5) ──────────
   const [activeStrategy, setActiveStrategy] = useState("off");
+  const [autoExecute,    setAutoExecute]    = useState(false);
 
-  // ── Lifted: activityEvents ────────────────────────────────────────────────
-  const [activityEvents, setActivityEvents] = useState([]);
-
-  // ── Lifted: AI workflow state (BUG002) ───────────────────────────────────
+  // ── AI workflow state (lifted — BUG002) ───────────────────────────────────
   const [workflow,          setWorkflow]          = useState(null);
   const [stageStatuses,     setStageStatuses]     = useState([]);
   const [activeStageIdx,    setActiveStageIdx]    = useState(0);
@@ -143,36 +217,175 @@ export default function Dashboard() {
   // BUG003: AI workflow active = workflow exists and not done
   const aiWorkflowActive = !!workflow && !workflowDone;
 
-  // ── Load state from KV on mount ──────────────────────────────────────────────
+  // ── Activity log ──────────────────────────────────────────────────────────
+  const [activityEvents,   setActivityEvents]   = useState([]);
+  const [logOldestTs,      setLogOldestTs]       = useState(null);  // cursor for load-more
+  const [logLoading,       setLogLoading]        = useState(false);
+  const [logHasMore,       setLogHasMore]        = useState(true);
+
+  // Prevent double-persist during bootstrapping
+  const bootstrappedRef = useRef(false);
+
+  // ── Load ALL state from KV on mount ──────────────────────────────────────
   useEffect(() => {
     async function load() {
-      const saved = await kvGet("portfolio:state");
-      const settings = await kvGet("settings:enforce_hours");
+      // Load in parallel — portfolio + all settings
+      const [
+        savedPortfolio,
+        savedHours,
+        savedStrategy,
+        savedAutoExec,
+        savedWorkflow,
+        savedStages,
+        savedStageIdx,
+        savedConsecRed,
+        savedWorkflowDone,
+        savedFallback,
+        savedStagePnl,
+      ] = await Promise.all([
+        kvGetPortfolio(),
+        kvGetSetting(KV.ENFORCE_HOURS),
+        kvGetSetting(KV.STRATEGY),
+        kvGetSetting(KV.AUTO_EXECUTE),
+        kvGetSetting(KV.WORKFLOW),
+        kvGetSetting(KV.STAGE_STATUSES),
+        kvGetSetting(KV.STAGE_IDX),
+        kvGetSetting(KV.CONSEC_RED),
+        kvGetSetting(KV.WORKFLOW_DONE),
+        kvGetSetting(KV.FALLBACK),
+        kvGetSetting(KV.STAGE_PNL),
+      ]);
 
-      if (saved && (saved.balance > 0 || saved.startingBalance > 0)) {
-        setPortfolio(saved);
+      // Portfolio
+      if (savedPortfolio && (savedPortfolio.balance > 0 || savedPortfolio.startingBalance > 0)) {
+        setPortfolio(savedPortfolio);
       }
-      // If no saved state OR saved state is corrupted (balance=0) → show BalanceModal
-      // This handles cases where a bad deploy wipes the portfolio state in KV
 
-      if (settings !== null) {
-        setEnforceHours(settings === "true" || settings === true);
+      // Market hours
+      if (savedHours !== null) {
+        setEnforceHours(savedHours === "true" || savedHours === true);
       }
 
+      // Strategy
+      if (savedStrategy && savedStrategy !== "null") {
+        setActiveStrategy(savedStrategy);
+      }
+
+      // Auto execute
+      if (savedAutoExec !== null) {
+        setAutoExecute(savedAutoExec === "true");
+      }
+
+      // Workflow
+      try {
+        if (savedWorkflow && savedWorkflow !== "null") {
+          setWorkflow(JSON.parse(savedWorkflow));
+        }
+        if (savedStages && savedStages !== "null") {
+          setStageStatuses(JSON.parse(savedStages));
+        }
+        if (savedStageIdx && savedStageIdx !== "null") {
+          setActiveStageIdx(parseInt(savedStageIdx, 10) || 0);
+        }
+        if (savedConsecRed && savedConsecRed !== "null") {
+          setConsecutiveRed(parseInt(savedConsecRed, 10) || 0);
+        }
+        if (savedWorkflowDone !== null) {
+          setWorkflowDone(savedWorkflowDone === "true");
+        }
+        if (savedFallback !== null) {
+          setFallbackTriggered(savedFallback === "true");
+        }
+        if (savedStagePnl && savedStagePnl !== "null") {
+          setStagePnl(JSON.parse(savedStagePnl));
+        }
+      } catch { /* bad JSON — ignore, start fresh */ }
+
+      // Load activity log from D1 (last 12 hrs)
+      const logs = await d1GetLogs(null, 12);
+      if (logs.length > 0) {
+        const events = logs.map(r => ({
+          id:       r.id,
+          type:     r.type,
+          market:   r.market,
+          message:  r.message,
+          detail:   r.detail,
+          pnl:      r.pnl,
+          strategy: r.strategy,
+          time:     new Date(r.logged_at),
+          fromD1:   true,
+        }));
+        setActivityEvents(events);
+        setLogOldestTs(logs[logs.length - 1]?.logged_at || null);
+        setLogHasMore(logs.length >= 50);
+      } else {
+        setLogHasMore(false);
+      }
+
+      bootstrappedRef.current = true;
       setBootstrapped(true);
     }
     load();
   }, []);
 
-  // ── Persist portfolio to KV whenever it changes ───────────────────────────
+  // ── Persist portfolio ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (portfolio) kvSet("portfolio:state", portfolio);
+    if (!bootstrappedRef.current) return;
+    if (portfolio) kvSetPortfolio(portfolio);
   }, [portfolio]);
 
-  // ── Persist market hours toggle ───────────────────────────────────────────
+  // ── Persist market hours ──────────────────────────────────────────────────
   useEffect(() => {
-    if (bootstrapped) kvSet("settings:enforce_hours", String(enforceHours));
-  }, [enforceHours, bootstrapped]);
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.ENFORCE_HOURS, String(enforceHours));
+  }, [enforceHours]);
+
+  // ── Persist strategy + autoExecute ───────────────────────────────────────
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.STRATEGY, activeStrategy || "off");
+  }, [activeStrategy]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.AUTO_EXECUTE, String(autoExecute));
+  }, [autoExecute]);
+
+  // ── Persist workflow state ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.WORKFLOW, workflow ? JSON.stringify(workflow) : "null");
+  }, [workflow]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.STAGE_STATUSES, JSON.stringify(stageStatuses));
+  }, [stageStatuses]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.STAGE_IDX, String(activeStageIdx));
+  }, [activeStageIdx]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.CONSEC_RED, String(consecutiveRed));
+  }, [consecutiveRed]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.WORKFLOW_DONE, String(workflowDone));
+  }, [workflowDone]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.FALLBACK, String(fallbackTriggered));
+  }, [fallbackTriggered]);
+
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    kvSetSetting(KV.STAGE_PNL, JSON.stringify(stagePnl));
+  }, [stagePnl]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleBalanceConfirm = useCallback((amount) => {
@@ -180,18 +393,41 @@ export default function Dashboard() {
     setPortfolio(fresh);
   }, []);
 
-  const handleReset = useCallback((newAmount) => {
+  const handleReset = useCallback(async (newAmount) => {
     const fresh = resetPortfolio(newAmount);
     setPortfolio(fresh);
     setShowReset(false);
+    // Clear all strategy state on reset
+    setActiveStrategy("off");
+    setAutoExecute(false);
+    setWorkflow(null);
+    setStageStatuses([]);
+    setActiveStageIdx(0);
+    setConsecutiveRed(0);
+    setWorkflowDone(false);
+    setFallbackTriggered(false);
+    setStagePnl([]);
+    setActivityEvents([]);
+    // Wipe KV strategy keys
+    await Promise.all([
+      kvSetSetting(KV.STRATEGY,       "off"),
+      kvSetSetting(KV.AUTO_EXECUTE,   "false"),
+      kvSetSetting(KV.WORKFLOW,       "null"),
+      kvSetSetting(KV.STAGE_STATUSES, "[]"),
+      kvSetSetting(KV.STAGE_IDX,      "0"),
+      kvSetSetting(KV.CONSEC_RED,     "0"),
+      kvSetSetting(KV.WORKFLOW_DONE,  "false"),
+      kvSetSetting(KV.FALLBACK,       "false"),
+      kvSetSetting(KV.STAGE_PNL,      "[]"),
+    ]);
   }, []);
 
-  // AI strategy — calls the Worker which calls Anthropic
+  // AI strategy call (calls Worker → Anthropic)
   const handleAIStrategy = useCallback(async ({ prompt, market, currentPrice, portfolio: summary }) => {
-    const res = await fetch(config.workers.base + config.workers.routes.strategy, {
-      method: "POST",
+    const res = await fetch(WORKER_BASE + config.workers.routes.strategy, {
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, market, currentPrice, portfolio: summary }),
+      body:    JSON.stringify({ prompt, market, currentPrice, portfolio: summary }),
     });
     if (!res.ok) throw new Error(`Strategy Worker returned ${res.status}`);
     const json = await res.json();
@@ -199,7 +435,7 @@ export default function Dashboard() {
     return json.data;
   }, []);
 
-  // Activity log handler (passed to all market pages)
+  // Activity log — write to memory + D1
   const handleActivityEvent = useCallback((eventOrCmd) => {
     if (eventOrCmd === "__clear__gold") {
       setActivityEvents(prev => prev.filter(e => e.market !== "gold"));
@@ -209,16 +445,49 @@ export default function Dashboard() {
       setActivityEvents(prev => prev.filter(e => e.market !== "set"));
       return;
     }
-    // Normalise: if the event is missing id/time it came from a raw call (e.g. OrderPanel)
-    // wrap it with makeActivityEvent so ActivityLog always gets a well-shaped object
+
+    // Normalise
     const ev = (eventOrCmd?.id && eventOrCmd?.time)
       ? eventOrCmd
       : makeActivityEvent(eventOrCmd);
+
+    // Write to D1 (async, don't await)
+    d1PostLog(ev);
+
     setActivityEvents(prev => {
       const next = [...prev, ev];
-      return next.length > 200 ? next.slice(-200) : next;
+      return next.length > 500 ? next.slice(-500) : next;
     });
   }, []);
+
+  // Load more activity logs (12 hrs further back per click)
+  const handleLoadMoreLogs = useCallback(async () => {
+    if (logLoading || !logHasMore) return;
+    setLogLoading(true);
+    try {
+      const older = await d1GetLogs(logOldestTs, 12);
+      if (older.length === 0) {
+        setLogHasMore(false);
+        return;
+      }
+      const events = older.map(r => ({
+        id:       r.id,
+        type:     r.type,
+        market:   r.market,
+        message:  r.message,
+        detail:   r.detail,
+        pnl:      r.pnl,
+        strategy: r.strategy,
+        time:     new Date(r.logged_at),
+        fromD1:   true,
+      }));
+      setActivityEvents(prev => [...events, ...prev]); // prepend older events
+      setLogOldestTs(older[older.length - 1]?.logged_at || null);
+      setLogHasMore(older.length >= 50);
+    } finally {
+      setLogLoading(false);
+    }
+  }, [logLoading, logHasMore, logOldestTs]);
 
   // ── Loading state ─────────────────────────────────────────────────────────
   if (!bootstrapped) {
@@ -230,17 +499,47 @@ export default function Dashboard() {
     );
   }
 
-  // ── First run — show balance setup ───────────────────────────────────────
   if (!portfolio) {
     return <BalanceModal onConfirm={handleBalanceConfirm} />;
   }
 
-  const summary = calcPortfolioSummary(portfolio);
+  const summary      = calcPortfolioSummary(portfolio);
   const totalReturnUp = summary.totalReturn >= 0;
   const dayPnLUp      = summary.realisedPnL >= 0;
+  const setOpen       = isMarketOpen("set",  enforceHours);
+  const goldOpen      = isMarketOpen("gold", enforceHours);
 
-  const setOpen  = isMarketOpen("set",  enforceHours);
-  const goldOpen = isMarketOpen("gold", enforceHours);
+  // Props shared to both market pages
+  const sharedMarketProps = {
+    portfolio,
+    setPortfolio,
+    enforceHours,
+    onAIStrategy:      handleAIStrategy,
+    activeStrategy,
+    onStrategyChange:  setActiveStrategy,
+    autoExecute,
+    onAutoExecuteChange: setAutoExecute,
+    activityEvents,
+    onActivityEvent:   handleActivityEvent,
+    onLoadMoreLogs:    handleLoadMoreLogs,
+    logLoading,
+    logHasMore,
+    workflow,
+    setWorkflow,
+    stageStatuses,
+    setStageStatuses,
+    activeStageIdx,
+    setActiveStageIdx,
+    consecutiveRed,
+    setConsecutiveRed,
+    workflowDone,
+    setWorkflowDone,
+    fallbackTriggered,
+    setFallbackTriggered,
+    stagePnl,
+    setStagePnl,
+    aiWorkflowActive,
+  };
 
   return (
     <div className="dashboard">
@@ -280,7 +579,7 @@ export default function Dashboard() {
             </div>
           </Tooltip>
 
-          <Tooltip id="tooltip-header-balance">
+          <Tooltip id="tooltip-header-total-return">
             <div className="metric-block">
               <span className="metric-label">Total Return</span>
               <span className={`metric-value ${totalReturnUp ? "pnl-up" : "pnl-down"}`}>
@@ -291,7 +590,6 @@ export default function Dashboard() {
         </div>
 
         <div className="header-controls">
-          {/* Market Status Pills */}
           <div className="market-pills">
             <Tooltip id={`tooltip-market-set-${setOpen ? "open" : "closed"}`}>
               <span className={`market-pill ${setOpen ? "open" : "closed"}`}>
@@ -305,7 +603,6 @@ export default function Dashboard() {
             </Tooltip>
           </div>
 
-          {/* Market Hours Toggle */}
           <Tooltip id="tooltip-header-market-hours">
             <div className="toggle-control">
               <span className="toggle-label">Market Hours</span>
@@ -322,7 +619,6 @@ export default function Dashboard() {
             </div>
           </Tooltip>
 
-          {/* Reset Button */}
           <Tooltip id="tooltip-header-reset">
             <button className="reset-btn" onClick={() => setShowReset(true)}>
               🔄 Reset
@@ -349,64 +645,16 @@ export default function Dashboard() {
       {/* ── Tab Content ── */}
       <main className="tab-content">
         {activeTab === "gold" && (
-          <GoldMarket
-            portfolio={portfolio}
-            setPortfolio={setPortfolio}
-            enforceHours={enforceHours}
-            onAIStrategy={handleAIStrategy}
-            activeStrategy={activeStrategy}
-            onStrategyChange={setActiveStrategy}
-            activityEvents={activityEvents}
-            onActivityEvent={handleActivityEvent}
-            workflow={workflow}
-            setWorkflow={setWorkflow}
-            stageStatuses={stageStatuses}
-            setStageStatuses={setStageStatuses}
-            activeStageIdx={activeStageIdx}
-            setActiveStageIdx={setActiveStageIdx}
-            consecutiveRed={consecutiveRed}
-            setConsecutiveRed={setConsecutiveRed}
-            workflowDone={workflowDone}
-            setWorkflowDone={setWorkflowDone}
-            fallbackTriggered={fallbackTriggered}
-            setFallbackTriggered={setFallbackTriggered}
-            stagePnl={stagePnl}
-            setStagePnl={setStagePnl}
-            aiWorkflowActive={aiWorkflowActive}
-          />
+          <GoldMarket {...sharedMarketProps} />
         )}
         {activeTab === "set" && (
-          <SetMarket
-            portfolio={portfolio}
-            setPortfolio={setPortfolio}
-            enforceHours={enforceHours}
-            onAIStrategy={handleAIStrategy}
-            activeStrategy={activeStrategy}
-            onStrategyChange={setActiveStrategy}
-            activityEvents={activityEvents}
-            onActivityEvent={handleActivityEvent}
-            workflow={workflow}
-            setWorkflow={setWorkflow}
-            stageStatuses={stageStatuses}
-            setStageStatuses={setStageStatuses}
-            activeStageIdx={activeStageIdx}
-            setActiveStageIdx={setActiveStageIdx}
-            consecutiveRed={consecutiveRed}
-            setConsecutiveRed={setConsecutiveRed}
-            workflowDone={workflowDone}
-            setWorkflowDone={setWorkflowDone}
-            fallbackTriggered={fallbackTriggered}
-            setFallbackTriggered={setFallbackTriggered}
-            stagePnl={stagePnl}
-            setStagePnl={setStagePnl}
-            aiWorkflowActive={aiWorkflowActive}
-          />
+          <SetMarket {...sharedMarketProps} />
         )}
         {activeTab === "portfolio" && (
           <div className="coming-soon-page">
             <div className="coming-icon">💼</div>
             <h2>Portfolio View — Phase 5</h2>
-            <p>Combined portfolio analytics with drawdown, win rate, and hourly P&L will be built in Phase 5.</p>
+            <p>Pipeline dashboard, budget allocation, and ฿500/day goal tracker coming next.</p>
           </div>
         )}
       </main>
