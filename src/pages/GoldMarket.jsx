@@ -367,17 +367,19 @@ export default function GoldMarket({
 
           {orderMode === "manual" && (
             <StrategyPanel
-              market="gold"
-              symbol={activeSymbol}
-              priceHistory={priceHistory}
-              currentPrice={currentPrice}
-              portfolio={portfolio}
-              activeStrategy={activeStrategy}
-              onStrategyChange={onStrategyChange}
-              onExecuteBuy={handleStrategyBuy}
-              onExecuteSell={handleStrategySell}
-              onStrategyEvent={handleStrategyEvent}
-            />
+          market="gold"
+          symbol={activeSymbol}
+          priceHistory={priceHistory}
+          currentPrice={currentPrice}
+          portfolio={portfolio}
+          activeStrategy={activeStrategy}
+          onStrategyChange={onStrategyChange}
+          autoExecute={autoExecute}
+          onAutoExecuteChange={onAutoExecuteChange}
+          onExecuteBuy={handleStrategyBuy}
+          onExecuteSell={handleStrategySell}
+          onStrategyEvent={handleStrategyEvent}
+        />
           )}
         </div>
       </div>
