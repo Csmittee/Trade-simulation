@@ -1,20 +1,20 @@
 /**
  * StrategyPanel.jsx
- * Phase 4 patch — Revised execution model:
+ * Phase 5 patch — autoExecute lifted to Dashboard (session persistence).
  *
+ * Changes from Phase 4:
+ * - autoExecute is now a PROP (not local useState)
+ * - onAutoExecuteChange prop replaces setAutoExecute
+ * - All other behavior identical to Phase 4
+ *
+ * Execution model (unchanged):
  * AUTO EXECUTE ON  = strategy watches + shows confirm card for every signal
- *                    (with beep pattern and 60s countdown before auto-dismiss)
- * AUTO EXECUTE OFF = strategy watches + approaching alert only, arm required to surface card
+ * AUTO EXECUTE OFF = strategy watches silently. Arm It to surface one card.
  *
- * Tier logic (affects beep + card color, NOT whether card appears):
+ * Tier logic:
  *   Small  < 5%  → 1 beep,  green card
  *   Medium 5–20% → 3 beeps, yellow-orange card  "LARGE TRADE"
- *   Large  > 20% → 2 low beeps, orange-red card "OVERSIZED — needs approval"
- *   (no tier is silently auto-fired — user always approves)
- *
- * Fixed: strategy name always shows preset name, never "preset" or blank
- * Fixed: armed state shows correct tooltip
- * Updated: tactic rules updated to match new model
+ *   Large  > 20% → 2 low beeps, orange-red card "OVERSIZED"
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -24,13 +24,11 @@ import Tooltip, { TooltipIcon } from "./Tooltip.jsx";
 import config from "../../config.js";
 
 const PRESETS        = config.strategies.presets;
-const DISARM_MS      = 5 * 60 * 1000; // 5 minutes
-const CARD_TIMEOUT   = 60;             // seconds before confirm card auto-dismisses
+const DISARM_MS      = 5 * 60 * 1000;
+const CARD_TIMEOUT   = 60;
 
-// Strategies that support approaching alert
 const APPROACHING_SUPPORTED = new Set(["ma_crossover", "golden_cross", "support_bounce"]);
 
-// Updated tactic rules to match new model
 const TACTIC_RULES = [
   { icon: "🤖", text: "Auto Execute ON = strategy watches and shows you a confirm card every time a signal fires. You always approve." },
   { icon: "🔕", text: "Auto Execute OFF = strategy watches silently. You get approaching alerts only. Use Arm It to allow a card to appear on next signal." },
@@ -41,18 +39,18 @@ const TACTIC_RULES = [
   { icon: "📏", text: "Gold minimum: 1 baht-weight. SET minimum: 100 shares. No fractional units." },
 ];
 
-// ── Beep function (AudioContext, no library) ──────────────────────────────────
+// ── Beep (AudioContext) ───────────────────────────────────────────────────────
 function beep(pattern = "small") {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const configs = {
-      small:    [{ freq: 880, dur: 0.12, vol: 0.3, delay: 0 }],
-      large:    [
+      small:   [{ freq: 880, dur: 0.12, vol: 0.3, delay: 0 }],
+      large:   [
         { freq: 660, dur: 0.15, vol: 0.6, delay: 0 },
         { freq: 660, dur: 0.15, vol: 0.6, delay: 0.25 },
         { freq: 660, dur: 0.15, vol: 0.6, delay: 0.50 },
       ],
-      blocked:  [
+      blocked: [
         { freq: 220, dur: 0.25, vol: 0.5, delay: 0 },
         { freq: 180, dur: 0.25, vol: 0.5, delay: 0.35 },
       ],
@@ -70,9 +68,7 @@ function beep(pattern = "small") {
       osc.start(ctx.currentTime + delay);
       osc.stop(ctx.currentTime + delay + dur + 0.05);
     });
-  } catch {
-    // AudioContext not available — silent fail
-  }
+  } catch { /* silent */ }
 }
 
 function getTier(tradeValue, balance) {
@@ -86,9 +82,9 @@ function tierBeep(tier) {
 }
 
 function tierCardClass(tier) {
-  if (tier === "auto")    return "confirm-buy";        // green
-  if (tier === "confirm") return "confirm-large";      // yellow-orange
-  if (tier === "block")   return "confirm-oversized";  // orange-red
+  if (tier === "auto")    return "confirm-buy";
+  if (tier === "confirm") return "confirm-large";
+  if (tier === "block")   return "confirm-oversized";
   return "confirm-buy";
 }
 
@@ -106,11 +102,13 @@ export default function StrategyPanel({
   portfolio,
   activeStrategy,
   onStrategyChange,
+  autoExecute,           // ← NOW A PROP (Phase 5)
+  onAutoExecuteChange,   // ← NOW A PROP (Phase 5)
   onExecuteBuy,
   onExecuteSell,
   onStrategyEvent,
   symbol,
-  aiWorkflowActive = false, // BUG003
+  aiWorkflowActive = false,
 }) {
   const [signal,        setSignal]        = useState(null);
   const [pendingTrade,  setPendingTrade]  = useState(null);
@@ -118,16 +116,15 @@ export default function StrategyPanel({
   const [notification,  setNotification]  = useState(null);
   const [isExpanded,    setIsExpanded]    = useState(true);
   const [tacticOpen,    setTacticOpen]    = useState(false);
-  const [autoExecute,   setAutoExecute]   = useState(false);
   const [armed,         setArmed]         = useState(false);
   const [armedAt,       setArmedAt]       = useState(null);
-  const [cardCountdown, setCardCountdown] = useState(null); // seconds remaining on confirm card
+  const [cardCountdown, setCardCountdown] = useState(null);
 
   const disarmTimerRef  = useRef(null);
   const cardTimerRef    = useRef(null);
   const cardIntervalRef = useRef(null);
 
-  // ── Run strategy on every price tick ───────────────────────────────────────
+  // ── Run strategy on every price tick ─────────────────────────────────────
   useEffect(() => {
     if (!activeStrategy || !currentPrice || !priceHistory?.length) {
       setSignal(null);
@@ -143,11 +140,10 @@ export default function StrategyPanel({
     if (!isActionable) return;
 
     const sigId = `${result.signal}-${Math.round(currentPrice)}`;
-    if (sigId === lastSignalId) return; // already handled this signal
+    if (sigId === lastSignalId) return;
 
-    // ── Auto Execute ON → always surface card ──────────────────────────────
     if (autoExecute) {
-      if (aiWorkflowActive) return; // BUG003 — AI workflow takes priority
+      if (aiWorkflowActive) return;
       setLastSignalId(sigId);
       const qty        = suggestPositionSize(portfolio?.balance || 0, currentPrice, result.suggestedStop, "medium", market);
       const tradeValue = qty * currentPrice;
@@ -157,7 +153,6 @@ export default function StrategyPanel({
       return;
     }
 
-    // ── Auto Execute OFF → only surface card if armed ──────────────────────
     if (armed) {
       setLastSignalId(sigId);
       const qty        = suggestPositionSize(portfolio?.balance || 0, currentPrice, result.suggestedStop, "medium", market);
@@ -170,7 +165,7 @@ export default function StrategyPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPrice, activeStrategy, priceHistory, armed, autoExecute]);
 
-  // ── Stage confirm card with 60s countdown ─────────────────────────────────
+  // ── Stage confirm card ────────────────────────────────────────────────────
   function stageCard(result, qty, tier) {
     clearCardTimers();
 
@@ -182,7 +177,6 @@ export default function StrategyPanel({
       setPendingTrade({ type: "sell", positionId: position.id, qty: position.qty, signal: result, tier });
     }
 
-    // Countdown display
     setCardCountdown(CARD_TIMEOUT);
     cardIntervalRef.current = setInterval(() => {
       setCardCountdown(prev => {
@@ -191,16 +185,15 @@ export default function StrategyPanel({
       });
     }, 1000);
 
-    // Auto-dismiss after 60s
     cardTimerRef.current = setTimeout(() => {
       setPendingTrade(null);
       setCardCountdown(null);
       const stratName = PRESETS.find(p => p.id === activeStrategy)?.name || activeStrategy || "Strategy";
       showNotification(`⏱ Card timed out — signal dismissed (${stratName})`, "info");
       onStrategyEvent?.({
-        type: "signal_timeout",
+        type:     "signal_timeout",
         market,
-        message: `⏱ Card timed out — ${result.signal?.toUpperCase()} signal dismissed`,
+        message:  `⏱ Card timed out — ${result.signal?.toUpperCase()} signal dismissed`,
         strategy: stratName,
       });
     }, CARD_TIMEOUT * 1000);
@@ -304,7 +297,7 @@ export default function StrategyPanel({
     };
   }, []);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
   const activePreset        = PRESETS.find(p => p.id === activeStrategy);
   const signalColor         = { buy: "#22c55e", sell: "#ef4444", hold: "#f59e0b" }[signal?.signal] || "#6b7280";
   const signalIcon          = { buy: "▲", sell: "▼", hold: "◆" }[signal?.signal] || "—";
@@ -319,7 +312,11 @@ export default function StrategyPanel({
           🤖 Auto-Strategy
           <TooltipIcon content="Select a preset strategy. Auto Execute ON = confirm card appears on every signal. OFF = alerts only, use Arm It to allow one card." />
           {armed && <span className="armed-badge">🎯 ARMED {armedCountdown}</span>}
-          {autoExecute && !armed && <span className="armed-badge" style={{ background: "rgba(96,165,250,0.15)", borderColor: "#60a5fa", color: "#60a5fa" }}>▶ WATCHING</span>}
+          {autoExecute && !armed && (
+            <span className="armed-badge" style={{ background: "rgba(96,165,250,0.15)", borderColor: "#60a5fa", color: "#60a5fa" }}>
+              ▶ WATCHING
+            </span>
+          )}
         </span>
         <span className="strategy-toggle-btn">{isExpanded ? "▲" : "▼"}</span>
       </div>
@@ -353,7 +350,12 @@ export default function StrategyPanel({
             </span>
             <button
               className={`auto-toggle-btn ${autoExecute ? "on" : "off"}`}
-              onClick={() => { setAutoExecute(v => !v); setPendingTrade(null); clearCardTimers(); setCardCountdown(null); }}
+              onClick={() => {
+                onAutoExecuteChange(!autoExecute);   // ← calls Dashboard setter (persists to KV)
+                setPendingTrade(null);
+                clearCardTimers();
+                setCardCountdown(null);
+              }}
             >
               {autoExecute ? "ON" : "OFF"}
             </button>
@@ -364,8 +366,15 @@ export default function StrategyPanel({
             <div className="strategy-label">Preset Strategy</div>
             <div className="strategy-options">
               <button
-                className={`strategy-opt ${!activeStrategy ? "active" : ""}`}
-                onClick={() => { onStrategyChange(null); setSignal(null); setPendingTrade(null); clearCardTimers(); setCardCountdown(null); disarm(); }}
+                className={`strategy-opt ${!activeStrategy || activeStrategy === "off" ? "active" : ""}`}
+                onClick={() => {
+                  onStrategyChange(null);
+                  setSignal(null);
+                  setPendingTrade(null);
+                  clearCardTimers();
+                  setCardCountdown(null);
+                  disarm();
+                }}
               >
                 Off
               </button>
@@ -373,7 +382,13 @@ export default function StrategyPanel({
                 <button
                   key={preset.id}
                   className={`strategy-opt ${activeStrategy === preset.id ? "active" : ""}`}
-                  onClick={() => { onStrategyChange(preset.id); setPendingTrade(null); clearCardTimers(); setCardCountdown(null); disarm(); }}
+                  onClick={() => {
+                    onStrategyChange(preset.id);
+                    setPendingTrade(null);
+                    clearCardTimers();
+                    setCardCountdown(null);
+                    disarm();
+                  }}
                   title={preset.description}
                 >
                   {preset.name}
@@ -388,7 +403,7 @@ export default function StrategyPanel({
           )}
 
           {/* ── Live Signal Display ── */}
-          {activeStrategy && signal && (
+          {activeStrategy && activeStrategy !== "off" && signal && (
             <div className="signal-display">
               <div className="signal-row">
                 <span className="signal-badge" style={{ background: signalColor }}>
@@ -425,16 +440,25 @@ export default function StrategyPanel({
             </div>
           )}
 
-          {activeStrategy && !signal && (
+          {activeStrategy && activeStrategy !== "off" && !signal && (
             <div className="signal-waiting">⏳ Watching {symbol?.replace(".BK", "")} for signals...</div>
           )}
-          {!activeStrategy && (
+          {(!activeStrategy || activeStrategy === "off") && (
             <div className="signal-waiting">Select a strategy above to start monitoring.</div>
           )}
 
           {/* ── BUG003 — AI Workflow lock banner ── */}
           {aiWorkflowActive && (
-            <div style={{ padding: "8px 10px", background: "rgba(245,158,11,0.12)", border: "1px solid var(--gold)", borderRadius: "4px", fontSize: "11px", fontWeight: 700, color: "var(--gold)", textAlign: "center" }}>
+            <div style={{
+              padding: "8px 10px",
+              background: "rgba(245,158,11,0.12)",
+              border: "1px solid var(--gold)",
+              borderRadius: "4px",
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "var(--gold)",
+              textAlign: "center",
+            }}>
               ✦ AI Workflow active — preset strategies locked
             </div>
           )}
@@ -443,7 +467,6 @@ export default function StrategyPanel({
           {pendingTrade && (
             <div className={`trade-confirm ${tierCardClass(pendingTrade.tier)}`}>
 
-              {/* Tier warning label */}
               {tierLabel(pendingTrade.tier) && (
                 <div className="confirm-tier-label">{tierLabel(pendingTrade.tier)}</div>
               )}
@@ -458,8 +481,12 @@ export default function StrategyPanel({
                   <>
                     <div>Qty: <strong>{pendingTrade.qty} {market === "gold" ? "baht-weight" : "shares"}</strong></div>
                     <div>Entry: <strong>฿{currentPrice?.toLocaleString()}</strong></div>
-                    {pendingTrade.signal.suggestedStop && <div>Stop Loss: <strong>฿{pendingTrade.signal.suggestedStop?.toLocaleString()}</strong></div>}
-                    {pendingTrade.signal.suggestedTP   && <div>Take Profit: <strong>฿{pendingTrade.signal.suggestedTP?.toLocaleString()}</strong></div>}
+                    {pendingTrade.signal.suggestedStop && (
+                      <div>Stop Loss: <strong>฿{pendingTrade.signal.suggestedStop?.toLocaleString()}</strong></div>
+                    )}
+                    {pendingTrade.signal.suggestedTP && (
+                      <div>Take Profit: <strong>฿{pendingTrade.signal.suggestedTP?.toLocaleString()}</strong></div>
+                    )}
                     <div className="confirm-cost">
                       Est. cost: ฿{(pendingTrade.qty * currentPrice)?.toLocaleString("en-US", { maximumFractionDigits: 0 })}
                       {portfolio?.balance > 0 && (
@@ -475,7 +502,6 @@ export default function StrategyPanel({
                 )}
               </div>
 
-              {/* Countdown bar */}
               {cardCountdown !== null && (
                 <div className="confirm-countdown">
                   <div className="confirm-countdown-bar" style={{ width: `${(cardCountdown / CARD_TIMEOUT) * 100}%` }} />
@@ -484,8 +510,12 @@ export default function StrategyPanel({
               )}
 
               <div className="confirm-actions">
-                <button className="confirm-btn confirm-yes" onClick={handleConfirm} disabled={aiWorkflowActive}>✓ Execute</button>
-                <button className="confirm-btn confirm-no"  onClick={handleDismiss}>✗ Dismiss</button>
+                <button className="confirm-btn confirm-yes" onClick={handleConfirm} disabled={aiWorkflowActive}>
+                  ✓ Execute
+                </button>
+                <button className="confirm-btn confirm-no" onClick={handleDismiss}>
+                  ✗ Dismiss
+                </button>
               </div>
             </div>
           )}
