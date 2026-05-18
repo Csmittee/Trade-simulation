@@ -14,6 +14,7 @@ import StrategyPanel from "../components/StrategyPanel.jsx";
 import ActivityLog   from "../components/ActivityLog.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useSetMarket } from "../injectors/set-injector.js";
+import { useFetchIntel } from "../injectors/intel-injector.js";
 import { calcPortfolioSummary, calcHourlyPnL } from "../core/portfolio-engine.js";
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
@@ -87,11 +88,7 @@ export default function SetMarket({
   const setPositions = positions.filter(p => p.market === "set");
   const currentPrice = activeQuote?.price || null;
 
-  const fetchIntel = async () => ({
-    factors:   ["Intel not available for SET in Phase 3 — coming in Phase 4"],
-    sentiment: "neutral",
-    confidence: "low",
-  });
+  const fetchIntel = useFetchIntel();
 
   const handleSymbolChange = (sym) => {
     setActiveSymbol(sym);
@@ -252,7 +249,7 @@ export default function SetMarket({
               timeframe={timeframe}
               historyLoading={historyLoading}
               onTimeframeChange={setTimeframe}
-              onIntelRequest={fetchIntel}
+              onIntelRequest={(symbol, date) => fetchIntel(symbol, date, "set")}
             />
 
             {hourlyPnL.length > 0 && (
@@ -382,6 +379,9 @@ export default function SetMarket({
             onAIStrategy={onAIStrategy}
             orderMode={orderMode}
             onOrderModeChange={setOrderMode}
+            recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
+            selectedSymbol={activeSymbol}
+            onLogActivity={onActivityEvent}
           />
 
           {/* StrategyPanel only shows when Manual tab is active */}
