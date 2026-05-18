@@ -45,6 +45,15 @@ export default function GoldMarket({
   onStrategyChange,
   activityEvents,
   onActivityEvent,
+  // Lifted workflow state (BUG002)
+  workflow, setWorkflow,
+  stageStatuses, setStageStatuses,
+  activeStageIdx, setActiveStageIdx,
+  consecutiveRed, setConsecutiveRed,
+  workflowDone, setWorkflowDone,
+  fallbackTriggered, setFallbackTriggered,
+  stagePnl, setStagePnl,
+  aiWorkflowActive, // BUG003
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState("THAI_GOLD_BAHT");
   const [timeframe,       setTimeframe]       = useState("1D");
@@ -79,10 +88,16 @@ export default function GoldMarket({
 
   const handleStrategyBuy = useCallback(async (order) => {
     const result = await handleBuy(order);
+    if (result?.error) {
+      console.warn("[StrategyBuy] rejected:", result.error);
+      pushEvent({ type: "block", symbol: order.symbol, detail: `Rejected: ${result.error}` });
+      return result;
+    }
     if (result?.trade) {
       pushEvent({ type: "buy", symbol: order.symbol, price: order.price, detail: `${order.strategy || activeStrategy} × ${order.qty}` });
       logTradeToD1({ id: result.trade.id, symbol: order.symbol, market: "gold", side: "buy", qty: order.qty, entry_price: order.price, exit_price: null, pnl: null, strategy: order.strategy || activeStrategy, opened_at: new Date().toISOString(), closed_at: null, sim_mode: 1 });
     }
+    return result;
   }, [handleBuy, activeStrategy]);
 
   const handleStrategySell = useCallback(async (positionId, price) => {
@@ -279,6 +294,14 @@ export default function GoldMarket({
             recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
             selectedSymbol="THAI_GOLD_BAHT"
             onLogActivity={onActivityEvent}
+            aiWorkflowActive={aiWorkflowActive}
+            workflow={workflow} setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl} setStagePnl={setStagePnl}
           />
 
           {orderMode === "manual" && (
@@ -293,6 +316,7 @@ export default function GoldMarket({
               onExecuteBuy={handleStrategyBuy}
               onExecuteSell={handleStrategySell}
               onStrategyEvent={handleStrategyEvent}
+              aiWorkflowActive={aiWorkflowActive}
             />
           )}
         </div>

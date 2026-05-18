@@ -70,6 +70,15 @@ export default function SetMarket({
   // Phase 4 — activity log
   activityEvents,
   onActivityEvent,
+  // Lifted workflow state (BUG002)
+  workflow, setWorkflow,
+  stageStatuses, setStageStatuses,
+  activeStageIdx, setActiveStageIdx,
+  consecutiveRed, setConsecutiveRed,
+  workflowDone, setWorkflowDone,
+  fallbackTriggered, setFallbackTriggered,
+  stagePnl, setStagePnl,
+  aiWorkflowActive, // BUG003
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState(WATCHLIST[0]);
   const [timeframe,       setTimeframe]       = useState("1D");
@@ -104,6 +113,11 @@ export default function SetMarket({
   // ── Strategy BUY ─────────────────────────────────────────────────────────────
   const handleStrategyBuy = useCallback(async (order) => {
     const result = await handleBuy(order);
+    if (result?.error) {
+      console.warn("[StrategyBuy SET] rejected:", result.error);
+      pushEvent({ type: "block", symbol: order.symbol, detail: `Rejected: ${result.error}` });
+      return result;
+    }
     if (result?.trade) {
       pushEvent({
         type:   "buy",
@@ -126,6 +140,7 @@ export default function SetMarket({
         sim_mode:    1,
       });
     }
+    return result;
   }, [handleBuy, activeStrategy]);
 
   // ── Strategy SELL ────────────────────────────────────────────────────────────
@@ -382,6 +397,14 @@ export default function SetMarket({
             recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
             selectedSymbol={activeSymbol}
             onLogActivity={onActivityEvent}
+            aiWorkflowActive={aiWorkflowActive}
+            workflow={workflow} setWorkflow={setWorkflow}
+            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
+            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
+            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
+            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
+            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
+            stagePnl={stagePnl} setStagePnl={setStagePnl}
           />
 
           {/* StrategyPanel only shows when Manual tab is active */}
@@ -397,6 +420,7 @@ export default function SetMarket({
               onExecuteBuy={handleStrategyBuy}
               onExecuteSell={handleStrategySell}
               onStrategyEvent={handleStrategyEvent}
+              aiWorkflowActive={aiWorkflowActive}
             />
           )}
         </div>
