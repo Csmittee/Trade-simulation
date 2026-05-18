@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Tooltip, { TooltipIcon } from "./Tooltip.jsx";
-import { suggestPositionSize, getRiskLabel, calcPortfolioSummary } from "../core/portfolio-engine.js";
+import { suggestPositionSize, getRiskLabel, calcPortfolioSummary, getRiskDefaults, inferRiskFromSLTP } from "../core/portfolio-engine.js";
 
 const WORKER_BASE = "https://tts-workers.csmittee.workers.dev";
 
@@ -54,6 +54,7 @@ export default function OrderPanel({
   const [riskLevel, setRiskLevel]   = useState("medium");
   const [error, setError]           = useState(null);
   const [warning, setWarning]       = useState(null);
+  const [manualCollapsed, setManualCollapsed] = useState(true); // always start collapsed
 
   // AI tab state
   const [aiPrompt, setAiPrompt]         = useState("");
@@ -97,8 +98,47 @@ export default function OrderPanel({
 
   // ── Manual tab handlers ───────────────────────────────────────────────────
   function handleSuggestSize() {
-    const suggested = suggestPositionSize(portfolio.balance, parseFloat(price), parseFloat(stopLoss), riskLevel, market);
+    const p = parseFloat(price) || currentPrice;
+    if (!p) return;
+    const sl = parseFloat(stopLoss) || null;
+    const suggested = suggestPositionSize(portfolio.balance, p, sl, riskLevel, market);
     setQty(suggested.toString());
+    // Also auto-fill SL/TP from risk defaults
+    const defaults = getRiskDefaults(p, riskLevel);
+    if (!stopLoss)   setStopLoss(String(defaults.stopLoss));
+    if (!takeProfit) setTakeProfit(String(defaults.takeProfit));
+  }
+
+  function handleRiskClick(level) {
+    setRiskLevel(level);
+    const p = parseFloat(price) || currentPrice;
+    if (!p) return;
+    // Auto-fill SL/TP for the selected risk level
+    const defaults = getRiskDefaults(p, level);
+    setStopLoss(String(defaults.stopLoss));
+    setTakeProfit(String(defaults.takeProfit));
+    // Recalculate qty if already set
+    if (qty) {
+      const sl = defaults.stopLoss;
+      const suggested = suggestPositionSize(portfolio.balance, p, sl, level, market);
+      setQty(suggested.toString());
+    }
+  }
+
+  function handleStopLossChange(val) {
+    setStopLoss(val);
+    const p = parseFloat(price) || currentPrice;
+    const sl = parseFloat(val);
+    const tp = parseFloat(takeProfit);
+    if (p) setRiskLevel(inferRiskFromSLTP(p, sl || null, tp || null));
+  }
+
+  function handleTakeProfitChange(val) {
+    setTakeProfit(val);
+    const p = parseFloat(price) || currentPrice;
+    const sl = parseFloat(stopLoss);
+    const tp = parseFloat(val);
+    if (p) setRiskLevel(inferRiskFromSLTP(p, sl || null, tp || null));
   }
 
   function handleSubmit() {
@@ -504,6 +544,14 @@ export default function OrderPanel({
       ══════════════════════════════════════════════════════════════════════ */}
       {mode === "manual" && (
         <>
+          {/* ── Collapsible header ── */}
+          <div className="manual-collapse-header" onClick={() => setManualCollapsed(v => !v)}>
+            <span className="manual-collapse-title">▲ Manual Order</span>
+            <span className="manual-collapse-hint">{manualCollapsed ? "▶ expand" : "▼ hide"}</span>
+          </div>
+
+          {!manualCollapsed && (
+            <>
           <div className="field-row">
             <label className="field-label">Price (THB)<TooltipIcon id="tooltip-order-price" /></label>
             <input type="number" className="field-input" value={price} onChange={e => setPrice(e.target.value)} placeholder={currentPrice?.toFixed(2)} step="0.01" />
@@ -519,19 +567,20 @@ export default function OrderPanel({
                 </div>
                 <div className="risk-level-select">
                   {["low","medium","high"].map(lvl => (
-                    <button key={lvl} className={`risk-btn ${riskLevel === lvl ? "active" : ""} ${lvl}`} onClick={() => setRiskLevel(lvl)}>{lvl}</button>
+                    <button key={lvl} className={`risk-btn ${riskLevel === lvl ? "active" : ""} ${lvl}`} onClick={() => handleRiskClick(lvl)}>{lvl}</button>
                   ))}
                 </div>
               </div>
 
               <div className="field-row">
                 <label className="field-label">Stop Loss<TooltipIcon id="tooltip-order-stoploss" /></label>
-                <input type="number" className="field-input" value={stopLoss} onChange={e => setStopLoss(e.target.value)} placeholder="Optional — auto-closes if price falls here" step="0.01" />
+                <input type="number" className="field-input" value={stopLoss} onChange={e => handleStopLossChange(e.target.value)} placeholder="Auto-filled by risk level" step="1" />
               </div>
 
               <div className="field-row">
                 <label className="field-label">Take Profit<TooltipIcon id="tooltip-order-takeprofit" /></label>
-                <input type="number" className="field-input" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} placeholder="Optional — auto-closes if price rises here" step="0.01" />
+                <input type="number" className="field-input" value={takeProfit} onChange={e => handleTakeProfitChange(e.target.value)} placeholder="Auto-filled by risk level" step="1" />
+              </div>
               </div>
 
               {tradeCost > 0 && (
@@ -582,6 +631,8 @@ export default function OrderPanel({
             <button className={`submit-btn ${side}`} onClick={handleSubmit} disabled={!canTrade}>
               {!canTrade ? "⊘ MARKET CLOSED" : `▲ ${simMode?"[SIM] ":""}PLACE BUY ORDER`}
             </button>
+          )}
+            </>
           )}
         </>
       )}
