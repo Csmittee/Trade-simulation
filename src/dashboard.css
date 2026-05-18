@@ -618,6 +618,8 @@ a { color: var(--gold); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 .activity-pnl {
   font-weight: 700;
