@@ -1905,3 +1905,9 @@ a { color: var(--gold); }
 .wl-search-input:focus { border-color: var(--gold); outline: none; }
 .wl-search-input { outline: none; }
 .wl-search-clear:hover { color: var(--text-primary); }
+
+/* ── Fix 5: SET closed tab — positions-zone shrinks to content, no empty gap ── */
+.positions-zone--closed {
+  max-height: none !important;
+  flex: 0 0 auto !important;
+}
