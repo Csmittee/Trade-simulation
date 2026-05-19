@@ -1,19 +1,16 @@
 /**
  * GoldMarket.jsx
- * Phase 4:
- *   - 3-panel independent scroll layout (market-body + panel-bottom)
- *   - activeStrategy now passed in from Dashboard (BUG001 fix)
- *   - Activity log events pushed via onActivityEvent
- *   - Panel 3 collapse toggle
- *   - intel-injector wired (Phase 4)
- *   - OrderPanel gets recentCloses + selectedSymbol + onLogActivity (Phase 4)
+ * Phase 6 redesign — bottom panel overhaul:
+ *   - Removed Open/Closed tab row — replaced with Active / All Session toggle button
+ *   - All Session shows closedTrades from portfolio memory (no D1 fetch)
+ *   - Sell desk collapsed by default, expands on click
+ *   - Activity log zone removed — replaced with single placeholder line
  */
 
 import { useState, useCallback } from "react";
 import ChartPanel    from "../components/ChartPanel.jsx";
 import OrderPanel    from "../components/OrderPanel.jsx";
 import StrategyPanel from "../components/StrategyPanel.jsx";
-import ActivityLog   from "../components/ActivityLog.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useGoldMarket } from "../injectors/gold-injector.js";
 import { useFetchIntel }  from "../injectors/intel-injector.js";
@@ -34,14 +31,6 @@ async function logTradeToD1(trade) {
   } catch (e) {
     console.warn("D1 trade log failed (non-critical):", e.message);
   }
-}
-
-async function fetchClosedFromD1(market) {
-  try {
-    const res  = await fetch(`${WORKER}/api/trades?market=${market}&limit=50`);
-    const json = await res.json();
-    return json.success ? json.data : [];
-  } catch { return []; }
 }
 
 export default function GoldMarket({
@@ -75,26 +64,13 @@ export default function GoldMarket({
   const [orderMode,       setOrderMode]       = useState("manual");
   const [sellQty,         setSellQty]         = useState("");
 
-  // ── Closed positions toggle ───────────────────────────────────────────────
-  const [posTab,        setPosTab]        = useState("open");
-  const [closedD1,      setClosedD1]      = useState([]);
-  const [closedLoading, setClosedLoading] = useState(false);
-  const [closedLoaded,  setClosedLoaded]  = useState(false);
+  // ── Positions view toggle (Active = open only | All Session = open + in-memory closed)
+  const [posView, setPosView] = useState("active"); // "active" | "all"
 
-  async function handleShowClosed() {
-    setPosTab("closed");
-    if (closedLoaded) return;
-    setClosedLoading(true);
-    try {
-      const data = await fetchClosedFromD1("gold");
-      setClosedD1(data);
-      setClosedLoaded(true);
-    } finally {
-      setClosedLoading(false);
-    }
-  }
+  // ── Sell desk collapsed by default ───────────────────────────────────────────
+  const [sellDeskOpen, setSellDeskOpen] = useState(false);
 
-  // ── Intel hook (Phase 4) ─────────────────────────────────────────────────────
+  // ── Intel hook ───────────────────────────────────────────────────────────────
   const fetchIntel = useFetchIntel();
 
   const {
@@ -108,6 +84,9 @@ export default function GoldMarket({
   const positions     = Array.isArray(portfolio?.positions)    ? portfolio.positions    : [];
   const hourlyPnL     = calcHourlyPnL(closedTrades.filter(t => t.market === "gold"));
   const goldPositions = positions.filter(p => p.market === "gold");
+
+  // In-memory closed trades for this market (session only, no D1 fetch)
+  const sessionClosed = closedTrades.filter(t => t.market === "gold");
 
   const currentPrice = activeSymbol === "THAI_GOLD_BAHT"
     ? goldData?.thaiGold?.price
@@ -129,7 +108,6 @@ export default function GoldMarket({
   }, [handleBuy, activeStrategy]);
 
   const handleStrategySell = useCallback(async (positionId, price) => {
-    // Strategy sell: close all gold positions FIFO at current price
     const goldPos = (portfolio?.positions || []).filter(p => p.market === "gold" && p.symbol === "THAI_GOLD_BAHT");
     const totalQty = goldPos.reduce((s, p) => s + p.qty, 0);
     if (totalQty === 0) return;
@@ -174,6 +152,7 @@ export default function GoldMarket({
       logTradeToD1({ id: t.id, symbol: t.symbol, market: "gold", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price, pnl: t.pnl, strategy: t.strategy || "manual", opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
     setSellQty("");
+    setSellDeskOpen(false);
   }
 
   return (
@@ -266,94 +245,115 @@ export default function GoldMarket({
             </div>
           </div>
 
-          {/* Panel Bottom — positions + activity */}
+          {/* ── Panel Bottom — positions only ── */}
           <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
             <div className="panel3-header">
               <span className="panel3-title">
-                Positions ({goldPositions.length}) · Activity ({activityEvents.filter(e => e.market === "gold").length})
+                Positions ({goldPositions.length})
+                {posView === "all" && sessionClosed.length > 0 && (
+                  <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {sessionClosed.length} closed this session</span>
+                )}
               </span>
-              <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
-                {panel3Collapsed ? "▲ Show" : "▼ Hide"}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* Active / All Session toggle */}
+                <div className="pos-view-toggle">
+                  <button
+                    className={`pos-view-btn ${posView === "active" ? "active" : ""}`}
+                    onClick={() => setPosView("active")}
+                  >Active</button>
+                  <button
+                    className={`pos-view-btn ${posView === "all" ? "active" : ""}`}
+                    onClick={() => setPosView("all")}
+                  >All Session</button>
+                </div>
+                <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
+                  {panel3Collapsed ? "▲ Show" : "▼ Hide"}
+                </button>
+              </div>
             </div>
 
             {!panel3Collapsed && (
-              <div className="panel-bottom-body">
+              <div className="panel-bottom-body panel-bottom-body--single">
 
+                {/* ── Positions zone ── */}
                 <div className="panel-bottom-zone positions-zone">
 
-                  {/* ── Open / Closed toggle ── */}
-                  <div className="pos-tab-row">
-                    <button
-                      className={`pos-tab-btn ${posTab === "open" ? "active" : ""}`}
-                      onClick={() => setPosTab("open")}
-                    >
-                      Open ({goldPositions.length})
-                    </button>
-                    <button
-                      className={`pos-tab-btn ${posTab === "closed" ? "active" : ""}`}
-                      onClick={handleShowClosed}
-                    >
-                      Closed {closedLoading ? "⏳" : ""}
-                    </button>
-                  </div>
-
                   {/* ── OPEN positions ── */}
-                  {posTab === "open" && (
+                  {goldPositions.length === 0 ? (
+                    <div className="empty-state">No open positions.</div>
+                  ) : (
                     <>
-                      {goldPositions.length === 0 ? (
-                        <div className="empty-state">No open positions.</div>
-                      ) : (
-                        <>
-                          <div className="positions-table">
-                            <div className="pos-row header">
-                              <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
-                              <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                              <span>Strategy</span>
+                      <div className="positions-table">
+                        <div className="pos-row header">
+                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
+                          <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
+                          <span>Strategy</span>
+                        </div>
+                        {goldPositions.map(pos => {
+                          const pnlUp = pos.unrealisedPnL >= 0;
+                          return (
+                            <div key={pos.id} className="pos-row">
+                              <span className="pos-symbol">{pos.symbol}</span>
+                              <span>{pos.qty}</span>
+                              <span>฿{pos.entryPrice?.toLocaleString()}</span>
+                              <span>฿{pos.currentPrice?.toLocaleString()}</span>
+                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                {pnlUp ? "+" : ""}฿{pos.unrealisedPnL?.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                              </span>
+                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                {pnlUp ? "+" : ""}{pos.unrealisedPnLPct?.toFixed(2)}%
+                              </span>
+                              <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
+                              <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                              <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
                             </div>
-                            {goldPositions.map(pos => {
-                              const pnlUp = pos.unrealisedPnL >= 0;
-                              return (
-                                <div key={pos.id} className="pos-row">
-                                  <span className="pos-symbol">{pos.symbol}</span>
-                                  <span>{pos.qty}</span>
-                                  <span>฿{pos.entryPrice?.toLocaleString()}</span>
-                                  <span>฿{pos.currentPrice?.toLocaleString()}</span>
-                                  <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                                    {pnlUp ? "+" : ""}฿{pos.unrealisedPnL?.toLocaleString("en-US", { minimumFractionDigits: 0 })}
-                                  </span>
-                                  <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                                    {pnlUp ? "+" : ""}{pos.unrealisedPnLPct?.toFixed(2)}%
-                                  </span>
-                                  <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
-                                  <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
-                                  <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          );
+                        })}
+                      </div>
 
-                          {/* Sell Desk */}
-                          {(() => {
-                            const totalHeld = goldPositions.reduce((s, p) => s + p.qty, 0);
-                            const totalCost = goldPositions.reduce((s, p) => s + p.totalCost, 0);
-                            const avgEntry  = totalCost / totalHeld;
-                            const price     = currentPrice || 0;
-                            const sellN     = parseFloat(sellQty) || 0;
-                            const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
-                            const pnlUp     = estPnl >= 0;
-                            return (
-                              <div className="sell-desk">
-                                <div className="sell-desk-summary">
-                                  <span>Holding <strong>{totalHeld}</strong> baht-weight</span>
-                                  <span>Avg entry <strong>฿{Math.round(avgEntry)?.toLocaleString()}</strong></span>
-                                  <span>Now <strong>฿{price?.toLocaleString("en-US",{maximumFractionDigits:0})}</strong></span>
-                                  <span className={goldPositions.reduce((s,p)=>s+p.unrealisedPnL,0) >= 0 ? "pnl-up" : "pnl-down"}>
-                                    Total P&L: {goldPositions.reduce((s,p)=>s+p.unrealisedPnL,0) >= 0 ? "+" : ""}฿{Math.round(goldPositions.reduce((s,p)=>s+p.unrealisedPnL,0))?.toLocaleString()}
-                                  </span>
-                                </div>
+                      {/* ── Sell Desk — collapsed by default ── */}
+                      {(() => {
+                        const totalHeld = goldPositions.reduce((s, p) => s + p.qty, 0);
+                        const totalCost = goldPositions.reduce((s, p) => s + p.totalCost, 0);
+                        const avgEntry  = totalHeld > 0 ? totalCost / totalHeld : 0;
+                        const price     = currentPrice || 0;
+                        const totalPnl  = goldPositions.reduce((s, p) => s + p.unrealisedPnL, 0);
+                        const sellN     = parseFloat(sellQty) || 0;
+                        const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
+                        const pnlUp     = (estPnl ?? 0) >= 0;
+                        const pnlColor  = totalPnl >= 0 ? "pnl-up" : "pnl-down";
+
+                        return (
+                          <div className="sell-desk sell-desk--collapsible">
+                            {/* Summary line — always visible, click to expand */}
+                            <button
+                              className="sell-desk-summary-line"
+                              onClick={() => setSellDeskOpen(v => !v)}
+                            >
+                              <span className="sdsl-symbol">THAI GOLD</span>
+                              <span className="sdsl-sep">—</span>
+                              <span className="sdsl-qty"><strong>{totalHeld}</strong> baht-wt</span>
+                              <span className="sdsl-sep">|</span>
+                              <span className="sdsl-avg">Avg ฿{Math.round(avgEntry)?.toLocaleString()}</span>
+                              <span className="sdsl-sep">|</span>
+                              <span className={`sdsl-pnl ${pnlColor}`}>
+                                P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}
+                              </span>
+                              <span className="sdsl-cta">{sellDeskOpen ? "▲ Close" : "▼ Sell"}</span>
+                            </button>
+
+                            {/* Expanded sell controls */}
+                            {sellDeskOpen && (
+                              <div className="sell-desk-body">
                                 <div className="sell-desk-controls">
-                                  <input type="number" className="sell-desk-input" value={sellQty} onChange={e => setSellQty(e.target.value)} placeholder={`Sell how many? (max ${totalHeld})`} min={1} max={totalHeld} step={1} />
+                                  <input
+                                    type="number"
+                                    className="sell-desk-input"
+                                    value={sellQty}
+                                    onChange={e => setSellQty(e.target.value)}
+                                    placeholder={`Qty (max ${totalHeld})`}
+                                    min={1} max={totalHeld} step={1}
+                                  />
                                   <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
                                   <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 2) || 1))}>Half</button>
                                 </div>
@@ -362,70 +362,63 @@ export default function GoldMarket({
                                     Sell {sellN} baht → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
                                   </div>
                                 )}
-                                <button className="sell-desk-btn" onClick={handleSellDesk} disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}>
+                                <button
+                                  className="sell-desk-btn"
+                                  onClick={handleSellDesk}
+                                  disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}
+                                >
                                   ▼ SELL {sellQty || "?"} BAHT-WEIGHT @ MARKET
                                 </button>
                               </div>
-                            );
-                          })()}
-                        </>
-                      )}
+                            )}
+                          </div>
+                        );
+                      })()}
                     </>
                   )}
 
-                  {/* ── CLOSED positions from D1 ── */}
-                  {posTab === "closed" && (
-                    <>
-                      {closedLoading ? (
-                        <div className="empty-state">⏳ Loading closed trades...</div>
-                      ) : closedD1.length === 0 ? (
-                        <div className="empty-state">No closed trades found in history.</div>
-                      ) : (
-                        <div className="positions-table">
-                          <div className="pos-row header">
-                            <span>Symbol</span><span>Qty</span><span>Entry</span><span>Exit</span>
-                            <span>P&L</span><span>Strategy</span><span>Closed</span>
-                          </div>
-                          {closedD1.map(t => {
-                            const pnlUp = (t.pnl || 0) >= 0;
-                            return (
-                              <div key={t.id} className="pos-row">
-                                <span className="pos-symbol">{t.symbol}</span>
-                                <span>{t.qty}</span>
-                                <span>฿{Math.round(t.entry_price)?.toLocaleString()}</span>
-                                <span>{t.exit_price ? `฿${Math.round(t.exit_price)?.toLocaleString()}` : "—"}</span>
-                                <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                                  {t.pnl != null ? `${pnlUp?"+":""}฿${Math.round(t.pnl)?.toLocaleString()}` : "—"}
-                                </span>
-                                <span className="pos-strategy">{t.strategy !== "manual" ? `🤖 ${t.strategy}` : "—"}</span>
-                                <span style={{fontSize:"10px",color:"var(--text-muted)"}}>
-                                  {t.closed_at ? new Date(t.closed_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"}
-                                </span>
-                              </div>
-                            );
-                          })}
+                  {/* ── All Session: in-memory closed trades ── */}
+                  {posView === "all" && sessionClosed.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div className="panel-bottom-section-title" style={{ marginBottom: 6 }}>
+                        Closed This Session ({sessionClosed.length})
+                      </div>
+                      <div className="positions-table">
+                        <div className="pos-row header">
+                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Exit</span>
+                          <span>P&L</span><span>Strategy</span><span>Closed</span>
                         </div>
-                      )}
-                    </>
+                        {sessionClosed.map((t, i) => {
+                          const pnlUp = (t.pnl ?? 0) >= 0;
+                          return (
+                            <div key={t.id || i} className="pos-row">
+                              <span className="pos-symbol">{t.symbol}</span>
+                              <span>{t.qty}</span>
+                              <span>฿{Math.round(t.entryPrice)?.toLocaleString()}</span>
+                              <span>{t.exitPrice ? `฿${Math.round(t.exitPrice)?.toLocaleString()}` : "—"}</span>
+                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                {t.pnl != null ? `${pnlUp ? "+" : ""}฿${Math.round(t.pnl)?.toLocaleString()}` : "—"}
+                              </span>
+                              <span className="pos-strategy">{t.strategy !== "manual" ? `🤖 ${t.strategy}` : "—"}</span>
+                              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                                {t.closedAt ? new Date(t.closedAt).toLocaleString("en-US", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {posView === "all" && sessionClosed.length === 0 && goldPositions.length === 0 && (
+                    <div className="empty-state">No trades this session.</div>
                   )}
 
                 </div>
 
-                <div className="panel-bottom-zone log-zone">
-                  <div className="panel-bottom-section-title">
-                    Activity Log — Gold
-                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade. Grouped by hour." />
-                    {activityEvents.filter(e => e.market === "gold").length > 0 && (
-                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__gold")}>Clear</button>
-                    )}
-                  </div>
-                  <ActivityLog
-                    events={activityEvents.filter(e => e.market === "gold")}
-                    onClear={() => onActivityEvent?.("__clear__gold")}
-                    onLoadMore={onLoadMoreLogs}
-                    logLoading={logLoading}
-                    logHasMore={logHasMore}
-                  />
+                {/* ── Activity log placeholder ── */}
+                <div className="activity-log-placeholder">
+                  📋 Activity log available in D1 Panel (coming soon)
                 </div>
 
               </div>
@@ -461,21 +454,21 @@ export default function GoldMarket({
 
           {orderMode === "manual" && (
             <StrategyPanel
-          market="gold"
-          symbol={activeSymbol}
-          priceHistory={priceHistory}
-          currentPrice={currentPrice}
-          portfolio={portfolio}
-          activeStrategy={activeStrategy}
-          onStrategyChange={onStrategyChange}
-          autoExecute={autoExecute}
-          onAutoExecuteChange={onAutoExecuteChange}
-          strategyDuration={strategyDuration}
-          onStrategyDurationChange={onStrategyDurationChange}
-          onExecuteBuy={handleStrategyBuy}
-          onExecuteSell={handleStrategySell}
-          onStrategyEvent={handleStrategyEvent}
-        />
+              market="gold"
+              symbol={activeSymbol}
+              priceHistory={priceHistory}
+              currentPrice={currentPrice}
+              portfolio={portfolio}
+              activeStrategy={activeStrategy}
+              onStrategyChange={onStrategyChange}
+              autoExecute={autoExecute}
+              onAutoExecuteChange={onAutoExecuteChange}
+              strategyDuration={strategyDuration}
+              onStrategyDurationChange={onStrategyDurationChange}
+              onExecuteBuy={handleStrategyBuy}
+              onExecuteSell={handleStrategySell}
+              onStrategyEvent={handleStrategyEvent}
+            />
           )}
         </div>
       </div>

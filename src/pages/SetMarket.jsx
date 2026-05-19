@@ -5,13 +5,17 @@
  * - AI workflow state uses Dashboard props instead of OrderPanel local state (Fix 2)
  * - Fix 4 + Fix 6: Watchlist replaced with search input + tier filter (Top 50 / Top 100 / All SET)
  * - Fix 5: Removed duplicate section header in Closed positions tab
+ * Phase 6 bottom panel redesign:
+ * - Removed Open/Closed tab row — replaced with Active / All Session toggle
+ * - All Session shows in-memory closedTrades (no D1 fetch)
+ * - Sell desk collapsed by default, expands on click
+ * - Activity log zone removed — replaced with single placeholder line
  */
 
 import { useState, useCallback, useMemo } from "react";
 import ChartPanel    from "../components/ChartPanel.jsx";
 import OrderPanel    from "../components/OrderPanel.jsx";
 import StrategyPanel from "../components/StrategyPanel.jsx";
-import ActivityLog   from "../components/ActivityLog.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { useSetMarket } from "../injectors/set-injector.js";
 import { useFetchIntel } from "../injectors/intel-injector.js";
@@ -19,6 +23,7 @@ import { calcPortfolioSummary, calcHourlyPnL, executeSellQty } from "../core/por
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
 import config from "../../config.js";
+// Note: ActivityLog component no longer rendered in this file (placeholder replaces it)
 
 const WORKER = config.workers.base;
 
@@ -332,24 +337,10 @@ export default function SetMarket({
   const [orderMode,       setOrderMode]       = useState("manual");
   const [sellQty,         setSellQty]         = useState("");
 
-  // ── Closed positions toggle ───────────────────────────────────────────────
-  const [posTab,         setPosTab]         = useState("open");   // "open" | "closed"
-  const [closedD1,       setClosedD1]       = useState([]);
-  const [closedLoading,  setClosedLoading]  = useState(false);
-  const [closedLoaded,   setClosedLoaded]   = useState(false);
-
-  async function handleShowClosed() {
-    setPosTab("closed");
-    if (closedLoaded) return; // already fetched
-    setClosedLoading(true);
-    try {
-      const data = await fetchClosedFromD1("set");
-      setClosedD1(data);
-      setClosedLoaded(true);
-    } finally {
-      setClosedLoading(false);
-    }
-  }
+  // ── Positions view toggle (Active = open only | All Session = open + in-memory closed)
+  const [posView,      setPosView]      = useState("active"); // "active" | "all"
+  // ── Sell desk collapsed by default ───────────────────────────────────────────
+  const [sellDeskOpen, setSellDeskOpen] = useState(false);
 
   const {
     watchlistData, activeQuote, priceHistory, historyLoading,
@@ -362,6 +353,9 @@ export default function SetMarket({
   const hourlyPnL    = calcHourlyPnL(closedTrades.filter(t => t.market === "set"));
   const setPositions = positions.filter(p => p.market === "set");
   const currentPrice = activeQuote?.price || null;
+
+  // In-memory closed trades for this market (session only, no D1 fetch)
+  const sessionClosed = closedTrades.filter(t => t.market === "set");
 
   const fetchIntel = useFetchIntel();
 
@@ -402,7 +396,6 @@ export default function SetMarket({
     result.closedTrades.forEach(t => {
       logTradeToD1({ id: t.id, symbol: t.symbol, market: "set", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price || currentPrice, pnl: t.pnl, strategy: t.strategy || activeStrategy, opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
-    setClosedLoaded(false); // invalidate closed cache so next open reloads
   }, [portfolio, currentPrice, activeSymbol, activeStrategy]);
 
   function handleSellDesk() {
@@ -422,14 +415,12 @@ export default function SetMarket({
       logTradeToD1({ id: t.id, symbol: t.symbol, market: "set", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price, pnl: t.pnl, strategy: t.strategy || "manual", opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
     setSellQty("");
-    setClosedLoaded(false);
+    setSellDeskOpen(false);
   }
 
   function handleStrategyEvent(ev) {
     pushEvent({ ...ev, symbol: activeSymbol });
   }
-
-  const setEventsCount = activityEvents.filter(e => e.market === "set").length;
 
   return (
     <div className="market-page set-market">
@@ -532,92 +523,118 @@ export default function SetMarket({
             </div>
           </div>
 
-          {/* Panel Bottom — positions + log */}
+          {/* Panel Bottom — positions only */}
           <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
             <div className="panel3-header">
               <span className="panel3-title">
-                Positions ({setPositions.length}) · Activity ({setEventsCount})
+                Positions ({setPositions.length})
+                {posView === "all" && sessionClosed.length > 0 && (
+                  <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {sessionClosed.length} closed this session</span>
+                )}
               </span>
-              <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
-                {panel3Collapsed ? "▲ Show" : "▼ Hide"}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* Active / All Session toggle */}
+                <div className="pos-view-toggle">
+                  <button
+                    className={`pos-view-btn ${posView === "active" ? "active" : ""}`}
+                    onClick={() => setPosView("active")}
+                  >Active</button>
+                  <button
+                    className={`pos-view-btn ${posView === "all" ? "active" : ""}`}
+                    onClick={() => setPosView("all")}
+                  >All Session</button>
+                </div>
+                <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
+                  {panel3Collapsed ? "▲ Show" : "▼ Hide"}
+                </button>
+              </div>
             </div>
 
             {!panel3Collapsed && (
-              <div className="panel-bottom-body">
+              <div className="panel-bottom-body panel-bottom-body--single">
 
                 {/* Positions zone */}
-                <div className={`panel-bottom-zone positions-zone ${posTab === "closed" ? "positions-zone--closed" : ""}`}>
-
-                  {/* ── Open / Closed toggle ── */}
-                  <div className="pos-tab-row">
-                    <button
-                      className={`pos-tab-btn ${posTab === "open" ? "active" : ""}`}
-                      onClick={() => setPosTab("open")}
-                    >
-                      Open ({setPositions.length})
-                    </button>
-                    <button
-                      className={`pos-tab-btn ${posTab === "closed" ? "active" : ""}`}
-                      onClick={handleShowClosed}
-                    >
-                      Closed {closedLoading ? "⏳" : ""}
-                    </button>
-                  </div>
+                <div className="panel-bottom-zone positions-zone">
 
                   {/* ── OPEN positions ── */}
-                  {posTab === "open" && (
+                  {setPositions.length === 0 ? (
+                    <div className="empty-state">No open positions. Select a stock and place a buy order.</div>
+                  ) : (
                     <>
-                      {setPositions.length === 0 ? (
-                        <div className="empty-state">No open positions. Select a stock and place a buy order.</div>
-                      ) : (
-                        <>
-                          <div className="positions-table">
-                            <div className="pos-row header">
-                              <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
-                              <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                              <span>Strategy</span>
+                      <div className="positions-table">
+                        <div className="pos-row header">
+                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
+                          <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
+                          <span>Strategy</span>
+                        </div>
+                        {setPositions.map(pos => {
+                          const pnlUp = pos.unrealisedPnL >= 0;
+                          return (
+                            <div key={pos.id} className="pos-row">
+                              <span className="pos-symbol">{pos.symbol?.replace(".BK","")}</span>
+                              <span>{pos.qty?.toLocaleString()}</span>
+                              <span>฿{pos.entryPrice?.toFixed(2)}</span>
+                              <span>฿{pos.currentPrice?.toFixed(2)}</span>
+                              <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}฿{pos.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}</span>
+                              <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}{pos.unrealisedPnLPct?.toFixed(2)}%</span>
+                              <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
+                              <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
+                              <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
                             </div>
-                            {setPositions.map(pos => {
-                              const pnlUp = pos.unrealisedPnL >= 0;
-                              return (
-                                <div key={pos.id} className="pos-row">
-                                  <span className="pos-symbol">{pos.symbol?.replace(".BK","")}</span>
-                                  <span>{pos.qty?.toLocaleString()}</span>
-                                  <span>฿{pos.entryPrice?.toFixed(2)}</span>
-                                  <span>฿{pos.currentPrice?.toFixed(2)}</span>
-                                  <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}฿{pos.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}</span>
-                                  <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}{pos.unrealisedPnLPct?.toFixed(2)}%</span>
-                                  <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
-                                  <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
-                                  <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          );
+                        })}
+                      </div>
 
-                          {/* Sell Desk */}
-                          {(() => {
-                            const symPos    = setPositions.filter(p => p.symbol === activeSymbol);
-                            const totalHeld = symPos.reduce((s, p) => s + p.qty, 0);
-                            const totalCost = symPos.reduce((s, p) => s + p.totalCost, 0);
-                            const avgEntry  = totalHeld > 0 ? totalCost / totalHeld : 0;
-                            const price     = currentPrice || 0;
-                            const sellN     = parseFloat(sellQty) || 0;
-                            const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
-                            const pnlUp     = estPnl >= 0;
-                            const totalPnl  = symPos.reduce((s,p)=>s+p.unrealisedPnL,0);
-                            if (totalHeld === 0) return <div className="empty-state" style={{fontSize:"11px"}}>Switch to the active symbol to sell.</div>;
-                            return (
-                              <div className="sell-desk">
-                                <div className="sell-desk-summary">
-                                  <span><strong>{activeSymbol?.replace(".BK","")}</strong> — {totalHeld?.toLocaleString()} shares</span>
-                                  <span>Avg entry <strong>฿{avgEntry?.toFixed(2)}</strong></span>
-                                  <span>Now <strong>฿{price?.toFixed(2)}</strong></span>
-                                  <span className={totalPnl >= 0 ? "pnl-up" : "pnl-down"}>P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}</span>
-                                </div>
+                      {/* ── Sell Desk — collapsed by default ── */}
+                      {(() => {
+                        const symPos    = setPositions.filter(p => p.symbol === activeSymbol);
+                        const totalHeld = symPos.reduce((s, p) => s + p.qty, 0);
+                        const totalCost = symPos.reduce((s, p) => s + p.totalCost, 0);
+                        const avgEntry  = totalHeld > 0 ? totalCost / totalHeld : 0;
+                        const price     = currentPrice || 0;
+                        const totalPnl  = symPos.reduce((s, p) => s + p.unrealisedPnL, 0);
+                        const sellN     = parseFloat(sellQty) || 0;
+                        const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
+                        const pnlUp     = (estPnl ?? 0) >= 0;
+                        const pnlColor  = totalPnl >= 0 ? "pnl-up" : "pnl-down";
+
+                        if (totalHeld === 0) return (
+                          <div className="empty-state" style={{ fontSize: "11px" }}>
+                            Switch to the active symbol to sell.
+                          </div>
+                        );
+
+                        return (
+                          <div className="sell-desk sell-desk--collapsible">
+                            {/* Summary line — always visible, click to expand */}
+                            <button
+                              className="sell-desk-summary-line"
+                              onClick={() => setSellDeskOpen(v => !v)}
+                            >
+                              <span className="sdsl-symbol">{activeSymbol?.replace(".BK","")}</span>
+                              <span className="sdsl-sep">—</span>
+                              <span className="sdsl-qty"><strong>{totalHeld?.toLocaleString()}</strong> shares</span>
+                              <span className="sdsl-sep">|</span>
+                              <span className="sdsl-avg">Avg ฿{avgEntry?.toFixed(2)}</span>
+                              <span className="sdsl-sep">|</span>
+                              <span className={`sdsl-pnl ${pnlColor}`}>
+                                P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}
+                              </span>
+                              <span className="sdsl-cta">{sellDeskOpen ? "▲ Close" : "▼ Sell"}</span>
+                            </button>
+
+                            {/* Expanded sell controls */}
+                            {sellDeskOpen && (
+                              <div className="sell-desk-body">
                                 <div className="sell-desk-controls">
-                                  <input type="number" className="sell-desk-input" value={sellQty} onChange={e => setSellQty(e.target.value)} placeholder={`Sell how many? (max ${totalHeld?.toLocaleString()})`} min={100} max={totalHeld} step={100} />
+                                  <input
+                                    type="number"
+                                    className="sell-desk-input"
+                                    value={sellQty}
+                                    onChange={e => setSellQty(e.target.value)}
+                                    placeholder={`Qty (max ${totalHeld?.toLocaleString()})`}
+                                    min={100} max={totalHeld} step={100}
+                                  />
                                   <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
                                   <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 200) * 100 || 100))}>Half</button>
                                 </div>
@@ -626,71 +643,63 @@ export default function SetMarket({
                                     Sell {sellN?.toLocaleString()} shares → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
                                   </div>
                                 )}
-                                <button className="sell-desk-btn" onClick={handleSellDesk} disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}>
+                                <button
+                                  className="sell-desk-btn"
+                                  onClick={handleSellDesk}
+                                  disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}
+                                >
                                   ▼ SELL {sellQty ? parseInt(sellQty)?.toLocaleString() : "?"} SHARES @ MARKET
                                 </button>
                               </div>
-                            );
-                          })()}
-                        </>
-                      )}
+                            )}
+                          </div>
+                        );
+                      })()}
                     </>
                   )}
 
-                  {/* ── CLOSED positions from D1 ── */}
-                  {posTab === "closed" && (
-                    <>
-                      {closedLoading ? (
-                        <div className="empty-state">⏳ Loading closed trades...</div>
-                      ) : closedD1.length === 0 ? (
-                        <div className="empty-state">No closed trades found in history.</div>
-                      ) : (
-                        <div className="positions-table">
-                          <div className="pos-row header">
-                            <span>Symbol</span><span>Qty</span><span>Entry</span><span>Exit</span>
-                            <span>P&L</span><span>Strategy</span><span>Closed</span>
-                          </div>
-                          {closedD1.map(t => {
-                            const pnlUp = (t.pnl || 0) >= 0;
-                            return (
-                              <div key={t.id} className="pos-row">
-                                <span className="pos-symbol">{t.symbol?.replace(".BK","")}</span>
-                                <span>{t.qty?.toLocaleString()}</span>
-                                <span>฿{parseFloat(t.entry_price)?.toFixed(2)}</span>
-                                <span>{t.exit_price ? `฿${parseFloat(t.exit_price)?.toFixed(2)}` : "—"}</span>
-                                <span className={pnlUp?"pnl-up":"pnl-down"}>
-                                  {t.pnl != null ? `${pnlUp?"+":""}฿${Math.round(t.pnl)?.toLocaleString()}` : "—"}
-                                </span>
-                                <span className="pos-strategy">{t.strategy !== "manual" ? `🤖 ${t.strategy}` : "—"}</span>
-                                <span style={{fontSize:"10px",color:"var(--text-muted)"}}>
-                                  {t.closed_at ? new Date(t.closed_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"}
-                                </span>
-                              </div>
-                            );
-                          })}
+                  {/* ── All Session: in-memory closed trades ── */}
+                  {posView === "all" && sessionClosed.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div className="panel-bottom-section-title" style={{ marginBottom: 6 }}>
+                        Closed This Session ({sessionClosed.length})
+                      </div>
+                      <div className="positions-table">
+                        <div className="pos-row header">
+                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Exit</span>
+                          <span>P&L</span><span>Strategy</span><span>Closed</span>
                         </div>
-                      )}
-                    </>
+                        {sessionClosed.map((t, i) => {
+                          const pnlUp = (t.pnl ?? 0) >= 0;
+                          return (
+                            <div key={t.id || i} className="pos-row">
+                              <span className="pos-symbol">{t.symbol?.replace(".BK","")}</span>
+                              <span>{t.qty?.toLocaleString()}</span>
+                              <span>฿{t.entryPrice?.toFixed(2)}</span>
+                              <span>{t.exitPrice ? `฿${t.exitPrice?.toFixed(2)}` : "—"}</span>
+                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                {t.pnl != null ? `${pnlUp ? "+" : ""}฿${Math.round(t.pnl)?.toLocaleString()}` : "—"}
+                              </span>
+                              <span className="pos-strategy">{t.strategy !== "manual" ? `🤖 ${t.strategy}` : "—"}</span>
+                              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                                {t.closedAt ? new Date(t.closedAt).toLocaleString("en-US", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {posView === "all" && sessionClosed.length === 0 && setPositions.length === 0 && (
+                    <div className="empty-state">No trades this session.</div>
                   )}
 
                 </div>
 
-                {/* Activity Log */}
-                <div className="panel-bottom-zone log-zone">
-                  <div className="panel-bottom-section-title">
-                    Activity Log — SET
-                    <TooltipIcon content="Every signal, arm, buy, sell, SL/TP hit and blocked trade. Grouped by hour." />
-                    {setEventsCount > 0 && (
-                      <button className="activity-clear-btn" onClick={() => onActivityEvent?.("__clear__set")}>Clear</button>
-                    )}
-                  </div>
-                  <ActivityLog
-                    events={activityEvents.filter(e => e.market === "set")}
-                    onClear={() => onActivityEvent?.("__clear__set")}
-                    onLoadMore={onLoadMoreLogs}
-                    logLoading={logLoading}
-                    logHasMore={logHasMore}
-                  />
+                {/* ── Activity log placeholder ── */}
+                <div className="activity-log-placeholder">
+                  📋 Activity log available in D1 Panel (coming soon)
                 </div>
 
               </div>
