@@ -131,11 +131,21 @@ export function computeUniqueLanes(positions, activeStrategy, workflow, stageSta
     // Bar shows "how far through today's session" — not how long position has been open.
     lane.timeProgress = getSessionProgress(lane.market);
 
-    // Plan status: based on open P&L vs cost
-    const pnlPct = lane.totalCost > 0 ? lane.unrealisedPnL / lane.totalCost : 0;
-    if (pnlPct > 0.005)   lane.planStatus = "on_plan";
-    else if (pnlPct >= 0) lane.planStatus = "late";
-    else                  lane.planStatus = "at_risk";
+    // ── Plan status: smarter logic ─────────────────────────────────────
+    // 1. If price is closer to SL than to TP → at_risk
+    // 2. If P&L is positive → on_plan
+    // 3. If P&L is flat (< 0.1% move) → late (grace, not risk)
+    // 4. If P&L is negative but within SL → late
+    // 5. If P&L is very negative (> 1.5% loss) → at_risk
+    const pnlPct    = lane.totalCost > 0 ? lane.unrealisedPnL / lane.totalCost : 0;
+    const price     = lane.currentPrice || lane.avgEntry;
+    const slDist    = lane.stopLoss   ? Math.abs(price - lane.stopLoss)   : null;
+    const tpDist    = lane.takeProfit ? Math.abs(lane.takeProfit - price) : null;
+    const nearSL    = slDist !== null && tpDist !== null && slDist < tpDist * 0.4;
+
+    if (nearSL || pnlPct < -0.015)    lane.planStatus = "at_risk";
+    else if (pnlPct > 0.001)          lane.planStatus = "on_plan";
+    else                              lane.planStatus = "late"; // flat or tiny loss = alert, not red
 
     return lane;
   });
