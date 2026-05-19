@@ -1540,534 +1540,292 @@ a { color: var(--gold); }
   background: rgba(255,255,255,0.08);
   color: var(--text-primary);
 }
-/* ═══════════════════════════════════════════════════════════════════════════
-   PHASE 6 — THE BATTLEFIELD (Portfolio tab)
-   Appended to dashboard.css
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   PHASE 6 — THE BATTLEFIELD v2  (append to dashboard.css)
+   Namespace: bf2-*  (replaces all bf-* rules from v1)
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Root layout ─────────────────────────────────────────────────────────── */
-.bf-root {
+/* ── Root ──────────────────────────────────────────────────────────── */
+.bf2-root {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
   height: 100%;
   overflow-y: auto;
-  color: var(--text-primary);
   font-family: var(--font-mono);
+  color: var(--text-primary);
 }
 
-/* ── Header strip ─────────────────────────────────────────────────────────── */
-.bf-header-strip {
+/* ── Header ────────────────────────────────────────────────────────── */
+.bf2-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: var(--bg-raised);
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-md);
+  flex-shrink: 0;
 }
-.bf-title {
+.bf2-header-left  { display: flex; align-items: baseline; gap: 8px; }
+.bf2-header-right { display: flex; align-items: center; gap: 12px; }
+.bf2-title {
   font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--gold);
-  letter-spacing: 0.04em;
+  font-size: 15px; font-weight: 700;
+  color: var(--gold); letter-spacing: 0.04em;
 }
-.bf-subtitle {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-left: 8px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.bf2-sub { font-size: 10px; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.bf2-equity { font-size: 11px; color: var(--text-secondary); padding: 3px 8px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.bf2-goal { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.bf2-goal-label { color: var(--text-muted); }
+.bf2-goal-val { font-weight: 500; }
+.bf2-goal-track { width: 56px; height: 4px; background: var(--bg-hover); border-radius: 2px; overflow: hidden; }
+.bf2-goal-fill  { height: 100%; background: var(--green); border-radius: 2px; transition: width .4s; }
+.bf2-error { font-size: 11px; color: var(--red); padding: 4px 8px; }
+.bf2-load-btn {
+  font-size: 10px; padding: 4px 12px;
+  background: var(--gold); color: #000;
+  border-radius: var(--radius-sm); font-weight: 600;
+  transition: opacity .15s;
 }
-.bf-header-right { display: flex; align-items: center; gap: 12px; }
-.bf-goal-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-}
-.bf-goal-label { color: var(--text-muted); }
-.bf-goal-val { font-weight: 500; }
-.bf-goal-achieved { color: var(--green); }
-.bf-goal-progress { color: var(--gold); }
-.bf-goal-behind   { color: var(--red); }
-.bf-goal-bar-bg {
-  width: 60px;
-  height: 4px;
-  background: var(--bg-hover);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.bf-goal-bar-fill {
-  height: 100%;
-  background: var(--green);
-  border-radius: 2px;
-  transition: width 0.4s ease;
-}
-.bf-equity-pill {
-  font-size: 11px;
-  color: var(--text-secondary);
-  padding: 4px 10px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
+.bf2-load-btn:hover { opacity: .85; }
+.bf2-load-btn:disabled { opacity: .4; cursor: default; }
 
-/* ── Load bar ─────────────────────────────────────────────────────────────── */
-.bf-load-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.bf-load-label { font-size: 10px; color: var(--text-muted); }
-.bf-range-btn {
-  font-size: 10px;
-  padding: 3px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  transition: all 0.15s;
-}
-.bf-range-btn:hover { border-color: var(--gold); color: var(--gold); }
-.bf-range-active {
-  background: var(--gold-dim);
-  border-color: var(--gold);
-  color: var(--gold);
-}
-.bf-load-btn {
-  font-size: 10px;
-  padding: 4px 12px;
-  background: var(--gold);
-  color: #000;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-  transition: opacity 0.15s;
-}
-.bf-load-btn:hover   { opacity: 0.85; }
-.bf-load-btn:disabled { opacity: 0.4; cursor: default; }
-.bf-load-error { font-size: 10px; color: var(--red); }
-.bf-load-ok    { font-size: 10px; color: var(--green); }
-
-/* ── Zone wrapper ─────────────────────────────────────────────────────────── */
-.bf-zone {
+/* ── Zone wrapper ───────────────────────────────────────────────────── */
+.bf2-zone {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 12px;
-}
-.bf-zone-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-.bf-zone-icon  { font-size: 14px; color: var(--gold); }
-.bf-zone-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
-.bf-zone-sub   { font-size: 10px; color: var(--text-muted); flex: 1; }
-
-/* ── Swim lanes ───────────────────────────────────────────────────────────── */
-.bf-lanes { display: flex; flex-direction: column; gap: 6px; }
-.bf-lane {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.bf-lane-label {
-  width: 80px;
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bf-lane-track {
-  flex: 1;
-  height: 26px;
-  background: var(--bg-raised);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.bf-lane-fill {
-  height: 100%;
-  min-width: 4%;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  transition: width 0.5s ease;
-}
-.bf-lane-green { background: rgba(34,197,94,0.18);  border-right: 2px solid var(--green); }
-.bf-lane-amber { background: rgba(245,158,11,0.18); border-right: 2px solid var(--gold); }
-.bf-lane-red   { background: rgba(239,68,68,0.18);  border-right: 2px solid var(--red); }
-.bf-lane-gray  { background: var(--bg-hover);        border-right: 2px solid var(--text-muted); }
-.bf-lane-proto {
-  font-size: 9px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bf-lane-badge {
-  font-size: 9px;
-  padding: 2px 7px;
-  border-radius: 99px;
-  white-space: nowrap;
-  font-weight: 500;
-}
-.bf-lane-badge.bf-lane-green { background: rgba(34,197,94,0.15);  color: var(--green); border: none; }
-.bf-lane-badge.bf-lane-amber { background: rgba(245,158,11,0.15); color: var(--gold);  border: none; }
-.bf-lane-badge.bf-lane-red   { background: rgba(239,68,68,0.15);  color: var(--red);   border: none; }
-.bf-lane-badge.bf-lane-gray  { background: var(--bg-raised);       color: var(--text-muted); border: none; }
-.bf-lane-open { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
-.bf-empty-lane {
-  font-size: 11px;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 12px 0;
-}
-.bf-lane-legend {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  font-size: 10px;
-  color: var(--text-muted);
-  flex-wrap: wrap;
-}
-.bf-legend-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  margin-right: 2px;
-}
-.bf-legend-green { background: var(--green); }
-.bf-legend-amber { background: var(--gold); }
-.bf-legend-red   { background: var(--red); }
-.bf-legend-gray  { background: var(--text-muted); }
-.bf-legend-note  { color: var(--text-muted); margin-left: auto; }
-
-/* ── Asset cards grid ─────────────────────────────────────────────────────── */
-.bf-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 8px;
-}
-.bf-card {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 10px;
-  cursor: grab;
-  transition: border-color 0.15s;
-}
-.bf-card:hover       { border-color: rgba(255,255,255,0.2); }
-.bf-card-risk        { border-color: rgba(239,68,68,0.4); }
-.bf-card-empty       {
-  border: 1px dashed var(--border);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 120px;
-  cursor: default;
-  opacity: 0.5;
-}
-.bf-empty-icon { font-size: 20px; color: var(--text-muted); margin-bottom: 6px; }
-.bf-empty-text { font-size: 10px; color: var(--text-muted); text-align: center; }
-.bf-empty-cards {
-  font-size: 11px;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 16px;
-}
-
-.bf-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 8px;
-  gap: 6px;
-}
-.bf-card-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  display: block;
-}
-.bf-card-market {
-  font-size: 9px;
-  color: var(--text-muted);
-  display: block;
-  margin-top: 1px;
-}
-.bf-proto-badge {
-  font-size: 9px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(96,165,250,0.15);
-  color: var(--blue);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.bf-proto-none {
-  background: var(--bg-hover);
-  color: var(--text-muted);
-}
-
-/* ── Gauges ───────────────────────────────────────────────────────────────── */
-.bf-gauges {
-  display: flex;
-  justify-content: space-around;
-  margin-bottom: 4px;
-}
-.bf-gauge-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-}
-.bf-gauge-val {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-primary);
-  text-align: center;
-  line-height: 1.2;
-}
-.bf-gauge-lbl {
-  font-size: 8px;
-  color: var(--text-muted);
-  text-align: center;
-}
-.bf-gauge-labels {
-  display: flex;
-  justify-content: space-around;
-  margin-bottom: 8px;
-}
-.bf-gauge-labels span {
-  font-size: 9px;
-  color: var(--text-muted);
-  text-align: center;
-  flex: 1;
-}
-
-/* ── Bar ──────────────────────────────────────────────────────────────────── */
-.bf-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.bf-bar-bg {
-  flex: 1;
-  height: 4px;
-  background: var(--bg-hover);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.bf-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.4s ease;
-  min-width: 2px;
-}
-.bf-bar-label { font-size: 9px; color: var(--text-muted); white-space: nowrap; }
-
-/* ── Position line ────────────────────────────────────────────────────────── */
-.bf-pos-line {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 6px;
-}
-.bf-pos-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.bf-pos-text { font-size: 10px; color: var(--text-secondary); }
-
-/* ── Card actions ─────────────────────────────────────────────────────────── */
-.bf-card-actions {
-  display: flex;
-  gap: 5px;
-  margin-top: 6px;
-}
-.bf-card-btn {
-  flex: 1;
-  font-size: 10px;
-  padding: 4px 0;
-  background: var(--gold);
-  color: #000;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-  transition: opacity 0.15s;
-}
-.bf-card-btn:hover { opacity: 0.85; }
-.bf-card-btn-ghost {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  font-weight: 400;
-}
-.bf-card-btn-ghost:hover { color: var(--text-primary); border-color: rgba(255,255,255,0.2); }
-
-/* ── Sort row ─────────────────────────────────────────────────────────────── */
-.bf-sort-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-.bf-sort-label { font-size: 10px; color: var(--text-muted); }
-.bf-sort-btn {
-  font-size: 10px;
-  padding: 3px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  transition: all 0.15s;
-}
-.bf-sort-btn:hover   { border-color: var(--gold); color: var(--gold); }
-.bf-sort-active {
-  background: var(--gold-dim);
-  border-color: var(--gold);
-  color: var(--gold);
-}
-
-/* ── Act zone ─────────────────────────────────────────────────────────────── */
-.bf-act-zone { border-color: rgba(251,191,36,0.2); }
-.bf-ai-btn {
-  margin-left: auto;
-  font-size: 10px;
-  padding: 4px 12px;
-  background: rgba(96,165,250,0.15);
-  border: 1px solid rgba(96,165,250,0.3);
-  color: var(--blue);
-  border-radius: var(--radius-sm);
-  transition: all 0.15s;
-}
-.bf-ai-btn:hover    { background: rgba(96,165,250,0.25); }
-.bf-ai-btn:disabled { opacity: 0.4; cursor: default; }
-
-.bf-drop-target {
-  min-height: 48px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 10px;
-  transition: border-color 0.15s;
-}
-.bf-drop-target:hover { border-color: var(--gold); }
-.bf-drop-has-item     { border-color: var(--gold); background: var(--gold-dim); }
-.bf-drop-hint { font-size: 11px; color: var(--text-muted); }
-.bf-drop-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  width: 100%;
-}
-.bf-drop-sym  { font-size: 12px; font-weight: 600; color: var(--gold); }
-.bf-drop-pnl  { font-size: 11px; font-weight: 500; }
-.bf-drop-wr   { font-size: 10px; color: var(--text-muted); flex: 1; }
-.bf-drop-clear {
-  font-size: 12px;
-  color: var(--text-muted);
-  background: none;
-  margin-left: auto;
-}
-.bf-drop-clear:hover { color: var(--text-primary); }
-
-.bf-ai-advice {
-  background: var(--bg-raised);
-  border: 1px solid rgba(96,165,250,0.2);
-  border-radius: var(--radius-sm);
   padding: 10px 12px;
-  margin-bottom: 10px;
+  flex-shrink: 0;
 }
-.bf-ai-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+.bf2-zone-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; flex-wrap: wrap;
 }
-.bf-ai-icon  { font-size: 14px; color: var(--blue); }
-.bf-ai-title { font-size: 11px; font-weight: 600; color: var(--blue); flex: 1; }
-.bf-ai-clear { font-size: 12px; color: var(--text-muted); background: none; }
-.bf-ai-clear:hover { color: var(--text-primary); }
-.bf-ai-text  { font-size: 11px; color: var(--text-secondary); line-height: 1.6; }
+.bf2-zone-icon  { font-size: 13px; color: var(--gold); }
+.bf2-zone-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.bf2-zone-sub   { font-size: 10px; color: var(--text-muted); flex: 1; }
 
-.bf-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+/* ── Lane controls ─────────────────────────────────────────────────── */
+.bf2-lane-controls { display: flex; gap: 4px; margin-left: auto; }
+.bf2-scale-btn, .bf2-collapse-btn {
+  font-size: 10px; padding: 2px 8px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  transition: all .15s;
 }
-.bf-suggest-btn {
-  font-size: 10px;
-  padding: 4px 10px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  transition: all 0.15s;
-}
-.bf-suggest-btn:hover { border-color: var(--gold); color: var(--gold); }
+.bf2-scale-btn:hover, .bf2-collapse-btn:hover { border-color: var(--gold); color: var(--gold); }
+.bf2-scale-btn.active { background: var(--gold-dim); border-color: var(--gold); color: var(--gold); }
 
-.bf-prompt-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+/* ── Timeline header ───────────────────────────────────────────────── */
+.bf2-timeline-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px; padding-left: 80px;
 }
-.bf-prompt-input {
-  flex: 1;
-  height: 34px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: 11px;
-  padding: 0 10px;
-  transition: border-color 0.15s;
+.bf2-tl-label { font-size: 9px; color: var(--text-muted); width: 0; }
+.bf2-tl-track { flex: 1; position: relative; height: 14px; }
+.bf2-tl-tick {
+  position: absolute; font-size: 9px; color: var(--text-muted);
+  transform: translateX(-50%);
 }
-.bf-prompt-input:focus { border-color: var(--gold); }
-.bf-prompt-send {
-  font-size: 11px;
-  padding: 0 14px;
-  background: var(--gold);
-  color: #000;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-  transition: opacity 0.15s;
-}
-.bf-prompt-send:hover    { opacity: 0.85; }
-.bf-prompt-send:disabled { opacity: 0.4; cursor: default; }
 
-.bf-nav-shortcuts {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* ── Swim lanes ────────────────────────────────────────────────────── */
+.bf2-lanes { display: flex; flex-direction: column; gap: 5px; }
+.bf2-lane {
+  display: flex; align-items: center; gap: 8px;
 }
-.bf-nav-label { font-size: 10px; color: var(--text-muted); }
-.bf-nav-btn {
-  font-size: 10px;
-  padding: 3px 10px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  transition: all 0.15s;
+.bf2-lane-name {
+  width: 72px; flex-shrink: 0;
+  font-size: 11px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.bf-nav-btn:hover { border-color: rgba(255,255,255,0.2); color: var(--text-primary); }
+.bf2-lane-track {
+  flex: 1; height: 24px;
+  background: var(--bg-raised); border-radius: 4px;
+  overflow: visible; position: relative;
+}
+.bf2-lane-fill {
+  height: 100%; border-radius: 4px;
+  min-width: 4%; display: flex; align-items: center;
+  padding: 0 8px; transition: width .6s ease;
+  position: relative;
+}
+.bf2-lane-proto {
+  font-size: 9px; color: rgba(255,255,255,0.5);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Pulse dot at leading edge */
+.bf2-lane-pulse {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 7px; height: 7px; border-radius: 50%;
+  box-shadow: 0 0 6px 2px currentColor;
+  animation: bf2-pulse 1.6s ease-in-out infinite;
+  margin-left: -3px;
+}
+@keyframes bf2-pulse {
+  0%, 100% { opacity: 1; transform: translateY(-50%) scale(1); }
+  50%       { opacity: 0.5; transform: translateY(-50%) scale(1.5); }
+}
+.bf2-lane-badge {
+  font-size: 9px; padding: 2px 7px; border-radius: 99px;
+  font-weight: 500; white-space: nowrap; flex-shrink: 0;
+}
+.bf2-lane-pnl {
+  font-size: 10px; font-weight: 500; white-space: nowrap; flex-shrink: 0;
+  min-width: 72px; text-align: right;
+}
+.bf2-empty-lane {
+  font-size: 11px; color: var(--text-muted); text-align: center; padding: 12px 0;
+}
+.bf2-lanes-more {
+  font-size: 10px; color: var(--text-muted); text-align: center; padding: 4px 0;
+}
+.bf2-lane-legend {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px; font-size: 10px; color: var(--text-muted);
+}
+.bf2-leg-dot {
+  display: inline-block; width: 7px; height: 7px;
+  border-radius: 2px; margin-right: 2px;
+}
+
+/* ── Cards zone ─────────────────────────────────────────────────────── */
+.bf2-cards-zone { }
+.bf2-sort-row   { display: flex; align-items: center; gap: 4px; }
+.bf2-sort-label { font-size: 10px; color: var(--text-muted); }
+.bf2-sort-btn {
+  font-size: 10px; padding: 2px 8px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  transition: all .15s;
+}
+.bf2-sort-btn:hover { border-color: var(--gold); color: var(--gold); }
+.bf2-sort-btn.active { background: var(--gold-dim); border-color: var(--gold); color: var(--gold); }
+.bf2-empty-cards {
+  font-size: 11px; color: var(--text-muted); text-align: center; padding: 16px;
+}
+
+/* Horizontal scroll row */
+.bf2-cards-scroll {
+  display: flex; gap: 10px;
+  overflow-x: auto; overflow-y: hidden;
+  padding-bottom: 8px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.bf2-cards-scroll::-webkit-scrollbar { height: 4px; }
+.bf2-cards-scroll::-webkit-scrollbar-track { background: var(--bg-raised); border-radius: 2px; }
+.bf2-cards-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Asset card ─────────────────────────────────────────────────────── */
+.bf2-card {
+  flex-shrink: 0; width: 180px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 10px;
+  cursor: pointer; scroll-snap-align: start;
+  transition: border-color .15s, transform .15s;
+}
+.bf2-card:hover         { border-color: rgba(255,255,255,0.2); transform: translateY(-1px); }
+.bf2-card-selected      { border-color: var(--gold) !important; background: var(--gold-dim); }
+.bf2-card-risk          { border-color: rgba(239,68,68,0.4); }
+.bf2-card-top           { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 5px; gap: 4px; }
+.bf2-card-name          { font-size: 12px; font-weight: 600; display: block; }
+.bf2-card-mkt           { font-size: 9px; color: var(--text-muted); display: block; margin-top: 1px; }
+.bf2-card-status        { font-size: 9px; padding: 2px 6px; border-radius: 99px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+.bf2-card-proto         { font-size: 9px; color: var(--text-muted); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Gauges ─────────────────────────────────────────────────────────── */
+.bf2-gauges        { display: flex; justify-content: space-around; margin-bottom: 2px; }
+.bf2-gauge         { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.bf2-gauge-empty   { justify-content: center; height: 50px; }
+.bf2-gauge-val     { font-size: 10px; font-weight: 500; text-align: center; }
+.bf2-gauge-sub     { font-size: 8px; color: var(--text-muted); text-align: center; }
+.bf2-card-footer   { display: flex; justify-content: space-between; align-items: center; margin: 6px 0 4px; }
+.bf2-card-cost     { font-size: 9px; color: var(--text-muted); }
+.bf2-card-hist     { font-size: 9px; font-weight: 500; }
+.bf2-card-nav {
+  width: 100%; font-size: 9px; padding: 4px;
+  background: var(--bg-hover); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  transition: all .15s;
+}
+.bf2-card-nav:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ── Act zone ───────────────────────────────────────────────────────── */
+.bf2-act-zone { border-color: rgba(251,191,36,0.2); }
+.bf2-ai-btn {
+  margin-left: auto; font-size: 10px; padding: 4px 12px;
+  background: rgba(96,165,250,0.12); border: 1px solid rgba(96,165,250,0.3);
+  color: var(--blue); border-radius: var(--radius-sm); transition: all .15s;
+}
+.bf2-ai-btn:hover    { background: rgba(96,165,250,0.22); }
+.bf2-ai-btn:disabled { opacity: .4; cursor: default; }
+
+/* Drop zone */
+.bf2-drop-zone {
+  min-height: 44px; border: 1px dashed var(--border);
+  border-radius: var(--radius-sm); display: flex;
+  align-items: center; padding: 6px 10px;
+  margin-bottom: 8px; transition: border-color .15s, background .15s;
+}
+.bf2-drop-hover { border-color: var(--gold); background: var(--gold-dim); }
+.bf2-drop-has   { border-color: rgba(255,255,255,0.15); background: var(--bg-raised); flex-wrap: wrap; gap: 6px; }
+.bf2-drop-hint  { font-size: 11px; color: var(--text-muted); }
+.bf2-drop-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; }
+
+/* Chips */
+.bf2-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; background: var(--bg-surface);
+  border: 1px solid var(--border); border-radius: 99px; font-size: 10px;
+}
+.bf2-chip-name { font-weight: 500; color: var(--text-primary); }
+.bf2-chip-pnl  { font-weight: 500; }
+.bf2-chip-x    { font-size: 10px; color: var(--text-muted); background: none; line-height: 1; }
+.bf2-chip-x:hover { color: var(--text-primary); }
+.bf2-clear-all {
+  font-size: 10px; color: var(--text-muted); background: none;
+  border: 1px solid var(--border); border-radius: 99px; padding: 2px 8px;
+}
+.bf2-clear-all:hover { color: var(--text-primary); }
+
+/* AI box */
+.bf2-ai-box {
+  background: var(--bg-raised); border: 1px solid rgba(96,165,250,0.2);
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px;
+}
+.bf2-ai-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.bf2-ai-icon  { font-size: 13px; color: var(--blue); }
+.bf2-ai-title { font-size: 11px; font-weight: 600; color: var(--blue); flex: 1; }
+.bf2-ai-x     { font-size: 12px; color: var(--text-muted); background: none; }
+.bf2-ai-x:hover { color: var(--text-primary); }
+.bf2-ai-text  { font-size: 11px; color: var(--text-secondary); line-height: 1.65; white-space: pre-line; }
+
+/* Prompt */
+.bf2-prompt-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.bf2-prompt-input {
+  flex: 1; height: 32px; background: var(--bg-raised);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-primary); font-size: 11px; padding: 0 10px;
+  transition: border-color .15s;
+}
+.bf2-prompt-input:focus { border-color: var(--gold); }
+.bf2-prompt-send {
+  font-size: 11px; padding: 0 14px; background: var(--gold);
+  color: #000; border-radius: var(--radius-sm); font-weight: 600;
+  transition: opacity .15s;
+}
+.bf2-prompt-send:hover    { opacity: .85; }
+.bf2-prompt-send:disabled { opacity: .4; cursor: default; }
+
+/* Nav row */
+.bf2-nav-row { display: flex; align-items: center; gap: 6px; }
+.bf2-nav-label { font-size: 10px; color: var(--text-muted); }
+.bf2-nav-btn {
+  font-size: 10px; padding: 3px 10px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary); transition: all .15s;
+}
+.bf2-nav-btn:hover { border-color: rgba(255,255,255,0.2); color: var(--text-primary); }
