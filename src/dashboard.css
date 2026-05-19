@@ -1620,15 +1620,41 @@ a { color: var(--gold); }
 .bf2-scale-btn.active { background: var(--gold-dim); border-color: var(--gold); color: var(--gold); }
 
 /* ── Timeline header ───────────────────────────────────────────────── */
-.bf2-timeline-header {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 6px; padding-left: 80px;
+/* ── Session time ruler ────────────────────────────────────────────── */
+.bf2-timeline-ruler {
+  display: flex;
+  align-items: flex-end;
+  margin-bottom: 4px;
+  height: 18px;
 }
-.bf2-tl-label { font-size: 9px; color: var(--text-muted); width: 0; }
-.bf2-tl-track { flex: 1; position: relative; height: 14px; }
-.bf2-tl-tick {
-  position: absolute; font-size: 9px; color: var(--text-muted);
+.bf2-ruler-spacer {
+  width: 72px;        /* must match .bf2-lane-name width exactly */
+  flex-shrink: 0;
+}
+.bf2-ruler-track {
+  flex: 1;
+  position: relative;
+  height: 18px;
+  /* leave right padding so last tick doesn't clip */
+  margin-right: 120px; /* matches badge + pnl column width approx */
+}
+.bf2-ruler-tick {
+  position: absolute;
+  font-size: 9px;
+  color: var(--text-muted);
   transform: translateX(-50%);
+  white-space: nowrap;
+  line-height: 1;
+  bottom: 0;
+}
+/* vertical guide lines on the lane track (pseudo, painted via lane itself) */
+.bf2-ruler-tick::before {
+  content: "";
+  display: block;
+  width: 1px;
+  height: 4px;
+  background: var(--border);
+  margin: 0 auto 2px;
 }
 
 /* ── Swim lanes ────────────────────────────────────────────────────── */
