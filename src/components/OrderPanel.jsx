@@ -371,6 +371,13 @@ export default function OrderPanel({
                   {workflow.sentiment === "bullish" ? "▲" : workflow.sentiment === "bearish" ? "▼" : "◆"} {workflow.sentiment?.toUpperCase()}
                   <span className="wf-confidence">· {workflow.confidence} confidence</span>
                 </div>
+                <button
+                  className="wf-cancel-btn"
+                  onClick={resetWorkflow}
+                  title="Cancel workflow and unlock manual trading"
+                >
+                  ✕ Cancel
+                </button>
               </div>
 
               {/* ── AI reasoning (compact) ── */}
