@@ -549,11 +549,6 @@ export default function SetMarket({
                 {/* Positions zone */}
                 <div className="panel-bottom-zone positions-zone">
 
-                  {/* ── Section title (Fix 5 — prevents header overlap on Closed tab) ── */}
-                  <div className="panel-bottom-section-title" style={{ marginBottom: "4px" }}>
-                    Positions — SET
-                  </div>
-
                   {/* ── Open / Closed toggle ── */}
                   <div className="pos-tab-row">
                     <button
