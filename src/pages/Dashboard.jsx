@@ -184,10 +184,7 @@ const TABS = [
   { key: "portfolio", label: "Portfolio", icon: "💼" },
 ];
 
-const EMPTY_BUNDLE = {
-  activeStrategy:    "off",
-  autoExecute:       false,
-  strategyDuration:  null,
+const EMPTY_WORKFLOW = {
   workflow:          null,
   stageStatuses:     [],
   activeStageIdx:    0,
@@ -195,6 +192,16 @@ const EMPTY_BUNDLE = {
   workflowDone:      false,
   fallbackTriggered: false,
   stagePnl:          [],
+};
+
+const EMPTY_BUNDLE = {
+  activeStrategy:    "off",
+  autoExecute:       false,
+  strategyDuration:  null,
+  goldOrderMode:     "manual",
+  setOrderMode:      "manual",
+  gold:              { ...EMPTY_WORKFLOW },
+  set:               { ...EMPTY_WORKFLOW },
 };
 
 export default function Dashboard() {
@@ -209,17 +216,32 @@ export default function Dashboard() {
   const [autoExecute,      setAutoExecute]      = useState(false);
   const [strategyDuration, setStrategyDuration] = useState(null);
 
-  // ── AI workflow state (lifted — BUG002) ───────────────────────────────────
-  const [workflow,          setWorkflow]          = useState(null);
-  const [stageStatuses,     setStageStatuses]     = useState([]);
-  const [activeStageIdx,    setActiveStageIdx]    = useState(0);
-  const [consecutiveRed,    setConsecutiveRed]    = useState(0);
-  const [workflowDone,      setWorkflowDone]      = useState(false);
-  const [fallbackTriggered, setFallbackTriggered] = useState(false);
-  const [stagePnl,          setStagePnl]          = useState([]);
+  // ── AI workflow state — split per market (Fix A — Phase 6b) ─────────────
+  // Gold
+  const [goldWorkflow,          setGoldWorkflow]          = useState(null);
+  const [goldStageStatuses,     setGoldStageStatuses]     = useState([]);
+  const [goldActiveStageIdx,    setGoldActiveStageIdx]    = useState(0);
+  const [goldConsecutiveRed,    setGoldConsecutiveRed]    = useState(0);
+  const [goldWorkflowDone,      setGoldWorkflowDone]      = useState(false);
+  const [goldFallbackTriggered, setGoldFallbackTriggered] = useState(false);
+  const [goldStagePnl,          setGoldStagePnl]          = useState([]);
 
-  // BUG003: AI workflow active = workflow exists and not done
-  const aiWorkflowActive = !!workflow && !workflowDone;
+  // SET
+  const [setWorkflow,          setSetWorkflow]          = useState(null);
+  const [setStageStatuses,     setSetStageStatuses]     = useState([]);
+  const [setActiveStageIdx,    setSetActiveStageIdx]    = useState(0);
+  const [setConsecutiveRed,    setSetConsecutiveRed]    = useState(0);
+  const [setWorkflowDone,      setSetWorkflowDone]      = useState(false);
+  const [setFallbackTriggered, setSetFallbackTriggered] = useState(false);
+  const [setStagePnl,          setSetStagePnl]          = useState([]);
+
+  // Fix B — orderMode per market, lifted from market pages
+  const [goldOrderMode, setGoldOrderMode] = useState("manual");
+  const [setOrderMode,  setSetOrderMode]  = useState("manual");
+
+  // Derived active flags per market
+  const goldWorkflowActive = !!goldWorkflow && !goldWorkflowDone;
+  const setWorkflowActive  = !!setWorkflow  && !setWorkflowDone;
 
   // ── Activity log ──────────────────────────────────────────────────────────
   const [activityEvents, setActivityEvents] = useState([]);
@@ -249,20 +271,37 @@ export default function Dashboard() {
         setEnforceHours(savedHours === "true" || savedHours === true);
       }
 
-      // Strategy bundle (all 9 fields in one JSON blob)
+      // Strategy bundle (all fields in one JSON blob)
       if (savedBundle && savedBundle !== "null") {
         try {
           const b = JSON.parse(savedBundle);
           if (b.activeStrategy !== undefined)    setActiveStrategy(b.activeStrategy);
           if (b.autoExecute !== undefined)        setAutoExecute(Boolean(b.autoExecute));
           if (b.strategyDuration !== undefined)   setStrategyDuration(b.strategyDuration ?? null);
-          if (b.workflow)                         setWorkflow(b.workflow);
-          if (Array.isArray(b.stageStatuses))     setStageStatuses(b.stageStatuses);
-          if (b.activeStageIdx !== undefined)     setActiveStageIdx(Number(b.activeStageIdx) || 0);
-          if (b.consecutiveRed !== undefined)     setConsecutiveRed(Number(b.consecutiveRed) || 0);
-          if (b.workflowDone !== undefined)       setWorkflowDone(Boolean(b.workflowDone));
-          if (b.fallbackTriggered !== undefined)  setFallbackTriggered(Boolean(b.fallbackTriggered));
-          if (Array.isArray(b.stagePnl))          setStagePnl(b.stagePnl);
+
+          // Fix B — restore orderMode per market
+          if (b.goldOrderMode)  setGoldOrderMode(b.goldOrderMode);
+          if (b.setOrderMode)   setSetOrderMode(b.setOrderMode);
+
+          // Fix A — restore gold workflow bundle
+          const g = b.gold || {};
+          if (g.workflow)                         setGoldWorkflow(g.workflow);
+          if (Array.isArray(g.stageStatuses))     setGoldStageStatuses(g.stageStatuses);
+          if (g.activeStageIdx !== undefined)     setGoldActiveStageIdx(Number(g.activeStageIdx) || 0);
+          if (g.consecutiveRed !== undefined)     setGoldConsecutiveRed(Number(g.consecutiveRed) || 0);
+          if (g.workflowDone !== undefined)       setGoldWorkflowDone(Boolean(g.workflowDone));
+          if (g.fallbackTriggered !== undefined)  setGoldFallbackTriggered(Boolean(g.fallbackTriggered));
+          if (Array.isArray(g.stagePnl))          setGoldStagePnl(g.stagePnl);
+
+          // Fix A — restore SET workflow bundle
+          const s = b.set || {};
+          if (s.workflow)                         setSetWorkflow(s.workflow);
+          if (Array.isArray(s.stageStatuses))     setSetStageStatuses(s.stageStatuses);
+          if (s.activeStageIdx !== undefined)     setSetActiveStageIdx(Number(s.activeStageIdx) || 0);
+          if (s.consecutiveRed !== undefined)     setSetConsecutiveRed(Number(s.consecutiveRed) || 0);
+          if (s.workflowDone !== undefined)       setSetWorkflowDone(Boolean(s.workflowDone));
+          if (s.fallbackTriggered !== undefined)  setSetFallbackTriggered(Boolean(s.fallbackTriggered));
+          if (Array.isArray(s.stagePnl))          setSetStagePnl(s.stagePnl);
         } catch { /* malformed JSON — start fresh */ }
       }
 
@@ -306,24 +345,40 @@ export default function Dashboard() {
   }, [enforceHours]);
 
   // ── Persist all strategy state as ONE KV write ────────────────────────────
-  // Any change to any of the 9 strategy fields → single KV write (was 9 writes)
+  // Any change to any strategy field → single KV write
   useEffect(() => {
     if (!bootstrappedRef.current) return;
     kvSetSetting(BUNDLE_KEY, JSON.stringify({
       activeStrategy:    activeStrategy || "off",
       autoExecute,
       strategyDuration:  strategyDuration ?? null,
-      workflow:          workflow || null,
-      stageStatuses,
-      activeStageIdx,
-      consecutiveRed,
-      workflowDone,
-      fallbackTriggered,
-      stagePnl,
+      goldOrderMode,
+      setOrderMode,
+      gold: {
+        workflow:          goldWorkflow || null,
+        stageStatuses:     goldStageStatuses,
+        activeStageIdx:    goldActiveStageIdx,
+        consecutiveRed:    goldConsecutiveRed,
+        workflowDone:      goldWorkflowDone,
+        fallbackTriggered: goldFallbackTriggered,
+        stagePnl:          goldStagePnl,
+      },
+      set: {
+        workflow:          setWorkflow || null,
+        stageStatuses:     setStageStatuses,
+        activeStageIdx:    setActiveStageIdx,
+        consecutiveRed:    setConsecutiveRed,
+        workflowDone:      setWorkflowDone,
+        fallbackTriggered: setFallbackTriggered,
+        stagePnl:          setStagePnl,
+      },
     }));
   }, [
-    activeStrategy, autoExecute, strategyDuration, workflow, stageStatuses,
-    activeStageIdx, consecutiveRed, workflowDone, fallbackTriggered, stagePnl,
+    activeStrategy, autoExecute, strategyDuration, goldOrderMode, setOrderMode,
+    goldWorkflow, goldStageStatuses, goldActiveStageIdx, goldConsecutiveRed,
+    goldWorkflowDone, goldFallbackTriggered, goldStagePnl,
+    setWorkflow, setStageStatuses, setActiveStageIdx, setConsecutiveRed,
+    setWorkflowDone, setFallbackTriggered, setStagePnl,
   ]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -338,13 +393,25 @@ export default function Dashboard() {
     setActiveStrategy("off");
     setAutoExecute(false);
     setStrategyDuration(null);
-    setWorkflow(null);
-    setStageStatuses([]);
-    setActiveStageIdx(0);
-    setConsecutiveRed(0);
-    setWorkflowDone(false);
-    setFallbackTriggered(false);
-    setStagePnl([]);
+    // Clear gold workflow
+    setGoldWorkflow(null);
+    setGoldStageStatuses([]);
+    setGoldActiveStageIdx(0);
+    setGoldConsecutiveRed(0);
+    setGoldWorkflowDone(false);
+    setGoldFallbackTriggered(false);
+    setGoldStagePnl([]);
+    // Clear SET workflow
+    setSetWorkflow(null);
+    setSetStageStatuses([]);
+    setSetActiveStageIdx(0);
+    setSetConsecutiveRed(0);
+    setSetWorkflowDone(false);
+    setSetFallbackTriggered(false);
+    setSetStagePnl([]);
+    // Reset orderMode
+    setGoldOrderMode("manual");
+    setSetOrderMode("manual");
     setActivityEvents([]);
     // Clear KV bundle in one write
     await kvSetSetting(BUNDLE_KEY, JSON.stringify(EMPTY_BUNDLE));
@@ -435,31 +502,53 @@ export default function Dashboard() {
   const setOpen       = isMarketOpen("set",  enforceHours);
   const goldOpen      = isMarketOpen("gold", enforceHours);
 
-  // Single props object passed to both market pages — avoids repetition
-  const sharedMarketProps = {
+  // Shared props that are identical for both markets
+  const commonMarketProps = {
     portfolio,
     setPortfolio,
     enforceHours,
-    onAIStrategy:        handleAIStrategy,
+    onAIStrategy:             handleAIStrategy,
     activeStrategy,
-    onStrategyChange:    setActiveStrategy,
+    onStrategyChange:         setActiveStrategy,
     autoExecute,
-    onAutoExecuteChange: setAutoExecute,
+    onAutoExecuteChange:      setAutoExecute,
     strategyDuration,
     onStrategyDurationChange: setStrategyDuration,
     activityEvents,
-    onActivityEvent:     handleActivityEvent,
-    onLoadMoreLogs:      handleLoadMoreLogs,
+    onActivityEvent:          handleActivityEvent,
+    onLoadMoreLogs:           handleLoadMoreLogs,
     logLoading,
     logHasMore,
-    workflow,          setWorkflow,
-    stageStatuses,     setStageStatuses,
-    activeStageIdx,    setActiveStageIdx,
-    consecutiveRed,    setConsecutiveRed,
-    workflowDone,      setWorkflowDone,
-    fallbackTriggered, setFallbackTriggered,
-    stagePnl,          setStagePnl,
-    aiWorkflowActive,
+  };
+
+  // Gold-specific workflow + orderMode props (Fix A + Fix B)
+  const goldMarketProps = {
+    ...commonMarketProps,
+    orderMode:            goldOrderMode,
+    onOrderModeChange:    setGoldOrderMode,
+    workflow:             goldWorkflow,          setWorkflow:          setGoldWorkflow,
+    stageStatuses:        goldStageStatuses,     setStageStatuses:     setGoldStageStatuses,
+    activeStageIdx:       goldActiveStageIdx,    setActiveStageIdx:    setGoldActiveStageIdx,
+    consecutiveRed:       goldConsecutiveRed,    setConsecutiveRed:    setGoldConsecutiveRed,
+    workflowDone:         goldWorkflowDone,      setWorkflowDone:      setGoldWorkflowDone,
+    fallbackTriggered:    goldFallbackTriggered, setFallbackTriggered: setGoldFallbackTriggered,
+    stagePnl:             goldStagePnl,          setStagePnl:          setGoldStagePnl,
+    aiWorkflowActive:     goldWorkflowActive,
+  };
+
+  // SET-specific workflow + orderMode props (Fix A + Fix B)
+  const setMarketProps = {
+    ...commonMarketProps,
+    orderMode:            setOrderMode,
+    onOrderModeChange:    setSetOrderMode,
+    workflow:             setWorkflow,           setWorkflow:          setSetWorkflow,
+    stageStatuses:        setStageStatuses,      setStageStatuses:     setSetStageStatuses,
+    activeStageIdx:       setActiveStageIdx,     setActiveStageIdx:    setSetActiveStageIdx,
+    consecutiveRed:       setConsecutiveRed,     setConsecutiveRed:    setSetConsecutiveRed,
+    workflowDone:         setWorkflowDone,       setWorkflowDone:      setSetWorkflowDone,
+    fallbackTriggered:    setFallbackTriggered,  setFallbackTriggered: setSetFallbackTriggered,
+    stagePnl:             setStagePnl,           setStagePnl:          setSetStagePnl,
+    aiWorkflowActive:     setWorkflowActive,
   };
 
   return (
@@ -564,18 +653,18 @@ export default function Dashboard() {
 
       {/* ── Tab Content ── */}
       <main className="tab-content">
-        {activeTab === "gold" && <GoldMarket {...sharedMarketProps} />}
-        {activeTab === "set"  && <SetMarket  {...sharedMarketProps} />}
+        {activeTab === "gold" && <GoldMarket {...goldMarketProps} />}
+        {activeTab === "set"  && <SetMarket  {...setMarketProps} />}
         {activeTab === "portfolio" && (
   <Portfolio
     portfolio={portfolio}
-    workflow={workflow}
+    workflow={goldWorkflow || setWorkflow}
     activeStrategy={activeStrategy}
     autoExecute={autoExecute}
     activityEvents={activityEvents}
-    stageStatuses={stageStatuses}
-    activeStageIdx={activeStageIdx}
-    workflowDone={workflowDone}
+    stageStatuses={goldWorkflow ? goldStageStatuses : setStageStatuses}
+    activeStageIdx={goldWorkflow ? goldActiveStageIdx : setActiveStageIdx}
+    workflowDone={goldWorkflow ? goldWorkflowDone : setWorkflowDone}
     onTabSwitch={setActiveTab}
   />
 )}

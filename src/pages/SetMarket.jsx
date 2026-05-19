@@ -330,11 +330,12 @@ export default function SetMarket({
   fallbackTriggered, setFallbackTriggered,
   stagePnl, setStagePnl,
   aiWorkflowActive,
+  orderMode,           // Fix B — lifted to Dashboard
+  onOrderModeChange,   // Fix B — lifted to Dashboard
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState(SET_UNIVERSE[0].t);
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
-  const [orderMode,       setOrderMode]       = useState("manual");
   const [sellQty,         setSellQty]         = useState("");
 
   // ── Positions view toggle (Active = open only | All Session = open + in-memory closed)
@@ -732,7 +733,7 @@ export default function SetMarket({
             enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
             orderMode={orderMode}
-            onOrderModeChange={setOrderMode}
+            onOrderModeChange={onOrderModeChange}
             recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
             selectedSymbol={activeSymbol}
             onLogActivity={onActivityEvent}
