@@ -1,19 +1,15 @@
 /**
- * Portfolio.jsx — The Battlefield v2
+ * Portfolio.jsx — The Battlefield v3
  * Phase 6
  *
- * Changes from v1:
- * - Zone 1: one swim lane per unique symbol (deduped from KV), shared clock timeline
- *           max 5 visible, collapse toggle, color band = plan status, shared/own scale toggle
- * - Zone 2: horizontal card scroll (not vertical grid), independent of Zone 1 filter
- * - Zone 3: multi-card drop, AI advisor using correct Worker payload via injector
- *
- * Props from Dashboard (sharedMarketProps + onTabSwitch):
- *   portfolio, workflow, activeStrategy, autoExecute, activityEvents,
- *   stageStatuses, activeStageIdx, workflowDone, onTabSwitch
+ * Changes from v2:
+ * - Zone 1 timeline header: labels now show session time (09:00→17:00 Gold, 10:00→17:00 SET)
+ *   instead of relative hours. Both markets share the same right edge (17:00 ICT).
+ * - dragStart: force-ADD the symbol to selectedSyms instead of toggling.
+ *   Previously toggled off if already selected, causing card to disappear from drop zone.
  */
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import {
   computeUniqueLanes,
   computeAssetStats,
@@ -24,7 +20,7 @@ import {
 } from "../injectors/portfolio-injector.js";
 import { calcPortfolioSummary } from "../core/portfolio-engine.js";
 
-// ── Sort options (cards only) ─────────────────────────────────────────────────
+// ── Sort options ──────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
   { key: "best_earn",   label: "Best earn" },
   { key: "most_invest", label: "Most invested" },
@@ -33,17 +29,19 @@ const SORT_OPTIONS = [
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function planColor(status) {
-  return { on_plan: "#22c55e", late: "#f59e0b", at_risk: "#ef4444" }[status] || "#4b5563";
+function planColor(s) {
+  return { on_plan: "#22c55e", late: "#f59e0b", at_risk: "#ef4444" }[s] || "#4b5563";
 }
-function planLabel(status) {
-  return { on_plan: "on plan", late: "alert", at_risk: "risk" }[status] || "—";
+function planLabel(s) {
+  return { on_plan: "on plan", late: "alert", at_risk: "risk" }[s] || "—";
 }
-function planBg(status) {
-  return { on_plan: "rgba(34,197,94,0.12)", late: "rgba(245,158,11,0.12)", at_risk: "rgba(239,68,68,0.12)" }[status] || "rgba(75,85,99,0.12)";
+function planBg(s) {
+  return {
+    on_plan: "rgba(34,197,94,0.12)",
+    late:    "rgba(245,158,11,0.12)",
+    at_risk: "rgba(239,68,68,0.12)",
+  }[s] || "rgba(75,85,99,0.12)";
 }
-
 function sortCards(cards, key) {
   return [...cards].sort((a, b) => {
     switch (key) {
@@ -55,17 +53,14 @@ function sortCards(cards, key) {
     }
   });
 }
-
-function fmt(n) { return Math.round(n).toLocaleString("en-US"); }
+function fmt(n)    { return Math.round(n).toLocaleString("en-US"); }
 function fmtPnl(n) { return `${n >= 0 ? "+" : ""}฿${fmt(Math.abs(n))}`; }
 
 // ── Dial Gauge ────────────────────────────────────────────────────────────────
-
 function DialGauge({ pct, label, sublabel, color }) {
-  const clamp  = Math.min(1, Math.max(0, pct));
-  const angle  = -180 + clamp * 180;
-  const r      = 20;
-  const cx = 26, cy = 26;
+  const clamp = Math.min(1, Math.max(0, pct));
+  const angle = -180 + clamp * 180;
+  const r = 20, cx = 26, cy = 26;
   const toXY = deg => ({
     x: cx + r * Math.cos((deg * Math.PI) / 180),
     y: cy + r * Math.sin((deg * Math.PI) / 180),
@@ -73,7 +68,6 @@ function DialGauge({ pct, label, sublabel, color }) {
   const start = toXY(-180);
   const end   = toXY(angle);
   const large = clamp > 0.5 ? 1 : 0;
-
   return (
     <div className="bf2-gauge">
       <svg width="52" height="30" viewBox="0 0 52 30">
@@ -95,9 +89,8 @@ function DialGauge({ pct, label, sublabel, color }) {
   );
 }
 
-// ── Asset Card (horizontal scroll item) ───────────────────────────────────────
-
-function AssetCard({ lane, stats, isSelected, onSelect, onNavigate }) {
+// ── Asset Card ────────────────────────────────────────────────────────────────
+function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate }) {
   const pnl     = Math.round(lane.unrealisedPnL || 0);
   const histPnl = Math.round(stats?.totalPnl || 0);
   const wr      = stats?.winRate ?? null;
@@ -110,36 +103,46 @@ function AssetCard({ lane, stats, isSelected, onSelect, onNavigate }) {
       className={`bf2-card ${isSelected ? "bf2-card-selected" : ""} ${isRisk ? "bf2-card-risk" : ""}`}
       onClick={() => onSelect(lane.symbol)}
       draggable
-      onDragStart={e => { e.dataTransfer.setData("bf-symbol", lane.symbol); onSelect(lane.symbol); }}
+      onDragStart={e => {
+        e.dataTransfer.setData("bf-symbol", lane.symbol);
+        onDragStart(lane.symbol); // force-add, never toggle
+      }}
     >
       <div className="bf2-card-top">
         <div>
           <span className="bf2-card-name">{lane.displayName}</span>
           <span className="bf2-card-mkt">{lane.market === "gold" ? "Gold" : "SET"}</span>
         </div>
-        <span className="bf2-card-status" style={{ background: planBg(lane.planStatus), color: planColor(lane.planStatus) }}>
+        <span className="bf2-card-status"
+          style={{ background: planBg(lane.planStatus), color: planColor(lane.planStatus) }}>
           {planLabel(lane.planStatus)}
         </span>
       </div>
 
       {lane.protocol && (
-        <div className="bf2-card-proto">{lane.protocol}{lane.protocolDetail && ` · ${lane.protocolDetail}`}</div>
+        <div className="bf2-card-proto">
+          {lane.protocol}{lane.protocolDetail && ` · ${lane.protocolDetail}`}
+        </div>
       )}
 
       <div className="bf2-gauges">
         <DialGauge
-          pct={Math.abs(pnl) / Math.max(500, Math.abs(pnl) * 1.2)}
+          pct={Math.abs(pnl) / Math.max(500, Math.abs(pnl) * 1.5)}
           label={fmtPnl(pnl)}
           sublabel="open P&L"
           color={pnl >= 0 ? "#22c55e" : "#ef4444"}
         />
-        {wr !== null && (
+        {wr !== null ? (
           <DialGauge
             pct={wr / 100}
             label={`${wr}%`}
             sublabel="win rate"
             color={wr >= 60 ? "#22c55e" : wr >= 40 ? "#f59e0b" : "#ef4444"}
           />
+        ) : (
+          <div className="bf2-gauge bf2-gauge-empty">
+            <span className="bf2-gauge-sub" style={{ textAlign: "center" }}>load D1<br/>for stats</span>
+          </div>
         )}
         {rr !== null && (
           <DialGauge
@@ -149,19 +152,21 @@ function AssetCard({ lane, stats, isSelected, onSelect, onNavigate }) {
             color={rr >= 0 ? "#60a5fa" : "#ef4444"}
           />
         )}
-        {wr === null && (
-          <div className="bf2-gauge bf2-gauge-empty">
-            <span className="bf2-gauge-sub">load D1<br/>for stats</span>
-          </div>
-        )}
       </div>
 
       <div className="bf2-card-footer">
         <span className="bf2-card-cost">฿{fmt(cost)} invested</span>
-        {stats && <span className="bf2-card-hist" style={{ color: histPnl >= 0 ? "#22c55e" : "#ef4444" }}>hist {fmtPnl(histPnl)}</span>}
+        {stats && (
+          <span className="bf2-card-hist" style={{ color: histPnl >= 0 ? "#22c55e" : "#ef4444" }}>
+            hist {fmtPnl(histPnl)}
+          </span>
+        )}
       </div>
 
-      <button className="bf2-card-nav" onClick={e => { e.stopPropagation(); onNavigate(lane.market); }}>
+      <button
+        className="bf2-card-nav"
+        onClick={e => { e.stopPropagation(); onNavigate(lane.market); }}
+      >
         Go to {lane.market === "gold" ? "Gold" : "SET"} →
       </button>
     </div>
@@ -169,7 +174,6 @@ function AssetCard({ lane, stats, isSelected, onSelect, onNavigate }) {
 }
 
 // ── Main Battlefield ──────────────────────────────────────────────────────────
-
 export default function Portfolio({
   portfolio, workflow, activeStrategy, autoExecute,
   stageStatuses, activeStageIdx, workflowDone, activityEvents, onTabSwitch,
@@ -177,46 +181,34 @@ export default function Portfolio({
   const summary   = calcPortfolioSummary(portfolio);
   const positions = portfolio?.positions || [];
 
-  // ── Zone 1 state ───────────────────────────────────────────────────────────
+  // Zone 1
   const [lanesCollapsed, setLanesCollapsed] = useState(false);
-  const [scaleMode,      setScaleMode]      = useState("shared"); // shared | own
+  const [scaleMode,      setScaleMode]      = useState("shared");
 
-  // ── Zone 2 state ───────────────────────────────────────────────────────────
+  // Zone 2
   const [sortKey,      setSortKey]      = useState("best_earn");
   const [assetStats,   setAssetStats]   = useState({});
   const [goalProgress, setGoalProgress] = useState(null);
   const [d1Loaded,     setD1Loaded]     = useState(false);
   const [d1Loading,    setD1Loading]    = useState(false);
   const [d1Error,      setD1Error]      = useState(null);
-  const [selectedSyms, setSelectedSyms] = useState(new Set()); // multi-select for act zone
+  const [selectedSyms, setSelectedSyms] = useState(new Set());
 
-  // ── Zone 3 state ───────────────────────────────────────────────────────────
+  // Zone 3
   const [aiAdvice,   setAiAdvice]   = useState(null);
   const [aiLoading,  setAiLoading]  = useState(false);
   const [actPrompt,  setActPrompt]  = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // ── Compute lanes (always from KV, no D1 needed) ──────────────────────────
+  // Lanes from KV (no D1 needed)
   const lanes = computeUniqueLanes(
     positions, activeStrategy, workflow,
     stageStatuses || [], activeStageIdx || 0
   );
 
-  // Shared clock: find the earliest openedAt across all lanes
-  const earliest = lanes.reduce((min, l) => {
-    if (!l.oldestOpenedAt) return min;
-    return !min || l.oldestOpenedAt < min ? l.oldestOpenedAt : min;
-  }, null);
-  const sharedSpanMs = earliest ? Date.now() - new Date(earliest).getTime() : 4 * 3600 * 1000;
-  const sharedMaxMs  = Math.max(sharedSpanMs, 4 * 3600 * 1000); // min 4 hr window
-
-  // ── Build card items ───────────────────────────────────────────────────────
+  // Cards
   const buildCards = () => {
-    const cards = lanes.map(lane => ({
-      ...lane,
-      stats: assetStats[lane.symbol] || null,
-    }));
-    // Add D1-only symbols not in KV
+    const cards = lanes.map(lane => ({ ...lane, stats: assetStats[lane.symbol] || null }));
     Object.values(assetStats).forEach(s => {
       if (!lanes.find(l => l.symbol === s.symbol)) {
         cards.push({
@@ -229,40 +221,44 @@ export default function Portfolio({
     });
     return sortCards(cards, sortKey);
   };
-
   const cards = buildCards();
 
-  // ── Load D1 stats ──────────────────────────────────────────────────────────
+  // Load D1
   const handleLoadD1 = useCallback(async () => {
     setD1Loading(true); setD1Error(null);
     try {
-      const from  = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-      const rows  = await fetchTradeHistory(from, null);
+      const from = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const rows = await fetchTradeHistory(from, null);
       setAssetStats(computeAssetStats(rows));
       setGoalProgress(computeGoalProgress(rows));
       setD1Loaded(true);
-    } catch { setD1Error("Failed to load D1 data"); }
+    } catch { setD1Error("Failed to load D1 data — check Worker connection."); }
     finally  { setD1Loading(false); }
   }, []);
 
-  // ── Card selection ─────────────────────────────────────────────────────────
+  // Card selection: toggle on click, force-add on drag
   const toggleSelect = sym => setSelectedSyms(prev => {
     const next = new Set(prev);
     next.has(sym) ? next.delete(sym) : next.add(sym);
     return next;
   });
 
+  // FIXED: drag always adds (never removes)
+  const forceAddSelect = sym => setSelectedSyms(prev => new Set([...prev, sym]));
+
   const selectedCards = cards.filter(c => selectedSyms.has(c.symbol));
 
-  // ── AI advisor ─────────────────────────────────────────────────────────────
+  // AI advisor
   const handleAiAdvisor = useCallback(async (extraPrompt = "") => {
     setAiLoading(true);
     try {
+      const contextLanes = selectedCards.length > 0 ? selectedCards : lanes;
       const advice = await fetchBattlefieldAdvisor({
-        portfolio, assetStats, goalProgress: goalProgress || { todayPnl: 0, goal: 500, pct: 0 },
-        workflow, lanes: selectedCards.length > 0 ? selectedCards : lanes,
+        portfolio, assetStats,
+        goalProgress: goalProgress || { todayPnl: 0, goal: 500, pct: 0 },
+        workflow, lanes: contextLanes,
       });
-      setAiAdvice(extraPrompt ? `[${extraPrompt}]\n${advice}` : advice);
+      setAiAdvice(extraPrompt ? `[${extraPrompt}]\n\n${advice}` : advice);
     } finally { setAiLoading(false); }
   }, [portfolio, assetStats, goalProgress, workflow, lanes, selectedCards]);
 
@@ -272,7 +268,11 @@ export default function Portfolio({
     setActPrompt("");
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // Session time labels for shared clock header
+  // Gold: 09:00–17:00, SET: 10:00–17:00 — we show shared labels based on earliest start
+  const hasGold  = lanes.some(l => l.market === "gold");
+  const sessionStart = hasGold ? "09:00" : "10:00";
+  const timeLabels   = [sessionStart, "11:00", "13:00", "15:00", "17:00"];
 
   const visibleLanes = lanesCollapsed ? [] : lanes.slice(0, 5);
   const hasMore      = lanes.length > 5;
@@ -290,10 +290,15 @@ export default function Portfolio({
           {goalProgress ? (
             <div className="bf2-goal">
               <span className="bf2-goal-label">Today</span>
-              <span className="bf2-goal-val" style={{ color: goalProgress.status === "achieved" ? "#22c55e" : goalProgress.todayPnl > 0 ? "#f59e0b" : "#ef4444" }}>
+              <span className="bf2-goal-val" style={{
+                color: goalProgress.status === "achieved" ? "#22c55e"
+                     : goalProgress.todayPnl > 0 ? "#f59e0b" : "#ef4444"
+              }}>
                 ฿{fmt(goalProgress.todayPnl)} / ฿{goalProgress.goal}
               </span>
-              <div className="bf2-goal-track"><div className="bf2-goal-fill" style={{ width: `${goalProgress.pct}%` }} /></div>
+              <div className="bf2-goal-track">
+                <div className="bf2-goal-fill" style={{ width: `${goalProgress.pct}%` }} />
+              </div>
             </div>
           ) : (
             <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading}>
@@ -313,7 +318,7 @@ export default function Portfolio({
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">⟶</span>
           <span className="bf2-zone-label">Zone 1 — Plan</span>
-          <span className="bf2-zone-sub">Shared clock · one lane per asset</span>
+          <span className="bf2-zone-sub">Session clock · one lane per asset · right edge = 17:00 ICT</span>
           <div className="bf2-lane-controls">
             <button
               className={`bf2-scale-btn ${scaleMode === "shared" ? "active" : ""}`}
@@ -331,30 +336,30 @@ export default function Portfolio({
 
         {!lanesCollapsed && (
           <>
-            {/* Shared clock header */}
-            {scaleMode === "shared" && lanes.length > 0 && (
-              <div className="bf2-timeline-header">
-                <span className="bf2-tl-label">Now</span>
-                <div className="bf2-tl-track">
-                  <div className="bf2-tl-tick" style={{ left: "0%" }}>0h</div>
-                  <div className="bf2-tl-tick" style={{ left: "25%" }}>1h</div>
-                  <div className="bf2-tl-tick" style={{ left: "50%" }}>2h</div>
-                  <div className="bf2-tl-tick" style={{ left: "75%" }}>3h</div>
-                  <div className="bf2-tl-tick" style={{ left: "100%" }}>4h+</div>
-                </div>
+            {/* Session time ruler */}
+            <div className="bf2-timeline-ruler">
+              <div className="bf2-ruler-spacer" /> {/* matches lane-name width */}
+              <div className="bf2-ruler-track">
+                {timeLabels.map((label, i) => (
+                  <span
+                    key={label}
+                    className="bf2-ruler-tick"
+                    style={{ left: `${(i / (timeLabels.length - 1)) * 100}%` }}
+                  >
+                    {label}
+                  </span>
+                ))}
               </div>
-            )}
+            </div>
 
             {lanes.length === 0 ? (
               <div className="bf2-empty-lane">No open positions — open a position to see swim lanes</div>
             ) : (
               <div className="bf2-lanes">
                 {visibleLanes.map(lane => {
-                  const progress = scaleMode === "own"
-                    ? lane.timeProgress
-                    : (lane.oldestOpenedAt
-                        ? Math.min(1, (Date.now() - new Date(lane.oldestOpenedAt).getTime()) / sharedMaxMs)
-                        : 0);
+                  // Shared clock: all lanes use same session progress (17:00 ICT right edge)
+                  // Own scale: same value here since injector always returns session progress
+                  const progress = lane.timeProgress;
                   const fillPct  = Math.max(3, Math.round(progress * 100));
                   const col      = planColor(lane.planStatus);
                   const bg       = planBg(lane.planStatus);
@@ -366,38 +371,51 @@ export default function Portfolio({
                       <div className="bf2-lane-track">
                         <div
                           className="bf2-lane-fill"
-                          style={{ width: `${fillPct}%`, background: bg, borderRight: `2px solid ${col}` }}
+                          style={{
+                            width: `${fillPct}%`,
+                            background: bg,
+                            borderRight: `2px solid ${col}`,
+                          }}
                         >
                           <span className="bf2-lane-proto">
                             {lane.protocol || "manual"}
                             {lane.protocolDetail && ` · ${lane.protocolDetail}`}
                           </span>
                         </div>
-                        {/* Pulse dot at the leading edge */}
-                        <div className="bf2-lane-pulse" style={{ left: `${fillPct}%`, background: col }} />
+                        <div
+                          className="bf2-lane-pulse"
+                          style={{ left: `${fillPct}%`, background: col }}
+                        />
                       </div>
-                      <span className="bf2-lane-badge" style={{ background: bg, color: col }}>
+                      <span
+                        className="bf2-lane-badge"
+                        style={{ background: bg, color: col }}
+                      >
                         {planLabel(lane.planStatus)}
                       </span>
-                      <span className="bf2-lane-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>
+                      <span
+                        className="bf2-lane-pnl"
+                        style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}
+                      >
                         {fmtPnl(pnl)}
                       </span>
                     </div>
                   );
                 })}
-                {hasMore && !lanesCollapsed && (
-                  <div className="bf2-lanes-more">+{lanes.length - 5} more assets — see cards below</div>
+                {hasMore && (
+                  <div className="bf2-lanes-more">
+                    +{lanes.length - 5} more assets — see cards below
+                  </div>
                 )}
               </div>
             )}
 
-            {/* Legend */}
             <div className="bf2-lane-legend">
               <span className="bf2-leg-dot" style={{ background: "#22c55e" }} /> on plan
               <span className="bf2-leg-dot" style={{ background: "#f59e0b" }} /> alert
               <span className="bf2-leg-dot" style={{ background: "#ef4444" }} /> risk
               <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: "10px" }}>
-                bar progress = time elapsed in current plan
+                bar = session progress · 17:00 ICT = right edge
               </span>
             </div>
           </>
@@ -412,7 +430,9 @@ export default function Portfolio({
           <span className="bf2-zone-icon">◉</span>
           <span className="bf2-zone-label">Zone 2 — Do + Check</span>
           <span className="bf2-zone-sub">
-            {selectedSyms.size > 0 ? `${selectedSyms.size} selected — drag or click Act` : "Click to select · drag to Act zone"}
+            {selectedSyms.size > 0
+              ? `${selectedSyms.size} selected — drag or click Act ↓`
+              : "Click to select · drag to Act zone"}
           </span>
           <div className="bf2-sort-row">
             <span className="bf2-sort-label">Sort:</span>
@@ -425,14 +445,21 @@ export default function Portfolio({
             ))}
           </div>
           {!d1Loaded && (
-            <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading} style={{ marginLeft: 8 }}>
+            <button
+              className="bf2-load-btn"
+              onClick={handleLoadD1}
+              disabled={d1Loading}
+              style={{ marginLeft: 6 }}
+            >
               {d1Loading ? "…" : "Load D1 stats"}
             </button>
           )}
         </div>
 
         {cards.length === 0 ? (
-          <div className="bf2-empty-cards">No positions or history — open a position or load D1 stats</div>
+          <div className="bf2-empty-cards">
+            No positions or history — open a position or load D1 stats
+          </div>
         ) : (
           <div className="bf2-cards-scroll">
             {cards.map(card => (
@@ -442,6 +469,7 @@ export default function Portfolio({
                 stats={card.stats}
                 isSelected={selectedSyms.has(card.symbol)}
                 onSelect={toggleSelect}
+                onDragStart={forceAddSelect}   // ← FIXED: always add on drag
                 onNavigate={mkt => onTabSwitch?.(mkt === "gold" ? "gold" : "set")}
               />
             ))}
@@ -450,7 +478,7 @@ export default function Portfolio({
       </section>
 
       {/* ══════════════════════════════
-          ZONE 3 — ACT (pinned bottom)
+          ZONE 3 — ACT
       ══════════════════════════════ */}
       <section
         className="bf2-zone bf2-act-zone"
@@ -460,19 +488,23 @@ export default function Portfolio({
           e.preventDefault();
           setIsDragOver(false);
           const sym = e.dataTransfer.getData("bf-symbol");
-          if (sym) toggleSelect(sym);
+          if (sym) forceAddSelect(sym); // ← FIXED: force-add on drop too
         }}
       >
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">⚡</span>
           <span className="bf2-zone-label">Zone 3 — Act</span>
-          <span className="bf2-zone-sub">Drop cards here · multi-select OK · prompt AI</span>
-          <button className="bf2-ai-btn" onClick={() => handleAiAdvisor()} disabled={aiLoading}>
+          <span className="bf2-zone-sub">Drop cards · multi-select OK · prompt AI</span>
+          <button
+            className="bf2-ai-btn"
+            onClick={() => handleAiAdvisor()}
+            disabled={aiLoading}
+          >
             {aiLoading ? "Thinking…" : "Get AI view ↗"}
           </button>
         </div>
 
-        {/* Drop zone + selected cards */}
+        {/* Drop zone */}
         <div className={`bf2-drop-zone ${isDragOver ? "bf2-drop-hover" : ""} ${selectedSyms.size > 0 ? "bf2-drop-has" : ""}`}>
           {selectedSyms.size === 0 ? (
             <span className="bf2-drop-hint">Drag cards here or click cards above to select</span>
@@ -484,17 +516,22 @@ export default function Portfolio({
                 return (
                   <div key={sym} className="bf2-chip">
                     <span className="bf2-chip-name">{card?.displayName || sym}</span>
-                    <span className="bf2-chip-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>{fmtPnl(pnl)}</span>
+                    <span className="bf2-chip-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>
+                      {fmtPnl(pnl)}
+                    </span>
                     <button className="bf2-chip-x" onClick={() => toggleSelect(sym)}>✕</button>
                   </div>
                 );
               })}
-              <button className="bf2-clear-all" onClick={() => setSelectedSyms(new Set())}>clear all</button>
+              <button
+                className="bf2-clear-all"
+                onClick={() => setSelectedSyms(new Set())}
+              >clear all</button>
             </div>
           )}
         </div>
 
-        {/* AI advice output */}
+        {/* AI advice */}
         {aiAdvice && (
           <div className="bf2-ai-box">
             <div className="bf2-ai-head">
@@ -506,7 +543,7 @@ export default function Portfolio({
           </div>
         )}
 
-        {/* Prompt row */}
+        {/* Prompt */}
         <div className="bf2-prompt-row">
           <input
             className="bf2-prompt-input"
@@ -518,7 +555,11 @@ export default function Portfolio({
             onChange={e => setActPrompt(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handlePromptSend()}
           />
-          <button className="bf2-prompt-send" onClick={handlePromptSend} disabled={aiLoading || !actPrompt.trim()}>
+          <button
+            className="bf2-prompt-send"
+            onClick={handlePromptSend}
+            disabled={aiLoading || !actPrompt.trim()}
+          >
             {aiLoading ? "…" : "Ask ↗"}
           </button>
         </div>
