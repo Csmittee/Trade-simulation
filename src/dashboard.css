@@ -1906,7 +1906,23 @@ a { color: var(--gold); }
 .wl-search-input { outline: none; }
 .wl-search-clear:hover { color: var(--text-primary); }
 
-/* ── Fix 5: SET closed tab — positions-zone shrinks to content, no empty gap ── */
+/* ── Workflow cancel button ── */
+.wf-cancel-btn {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: rgba(239,68,68,0.12);
+  border: 1px solid var(--red, #ef4444);
+  border-radius: 4px;
+  color: var(--red, #ef4444);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.wf-cancel-btn:hover {
+  background: rgba(239,68,68,0.25);
+}
+
+/* ── Fix 5: SET closed tab positions-zone shrinks to content ── */
 .positions-zone--closed {
   max-height: none !important;
   flex: 0 0 auto !important;
