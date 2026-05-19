@@ -104,6 +104,8 @@ export default function StrategyPanel({
   onStrategyChange,
   autoExecute,           // ← NOW A PROP (Phase 5)
   onAutoExecuteChange,   // ← NOW A PROP (Phase 5)
+  strategyDuration,      // ← minutes; null = use preset default (Phase 6)
+  onStrategyDurationChange, // ← called when user picks a duration (Phase 6)
   onExecuteBuy,
   onExecuteSell,
   onStrategyEvent,
@@ -303,6 +305,11 @@ export default function StrategyPanel({
   const signalIcon          = { buy: "▲", sell: "▼", hold: "◆" }[signal?.signal] || "—";
   const supportsApproaching = APPROACHING_SUPPORTED.has(activeStrategy);
 
+  // Duration: use strategyDuration prop if set, else fall back to preset default
+  const DURATION_LABELS = config.strategies.durationLabels || {};
+  const effectiveDuration = strategyDuration ?? activePreset?.defaultDuration ?? null;
+  const durationLabel     = effectiveDuration ? (DURATION_LABELS[effectiveDuration] || `${effectiveDuration}m`) : null;
+
   return (
     <div className="strategy-panel">
 
@@ -369,6 +376,7 @@ export default function StrategyPanel({
                 className={`strategy-opt ${!activeStrategy || activeStrategy === "off" ? "active" : ""}`}
                 onClick={() => {
                   onStrategyChange(null);
+                  onStrategyDurationChange?.(null);
                   setSignal(null);
                   setPendingTrade(null);
                   clearCardTimers();
@@ -384,6 +392,7 @@ export default function StrategyPanel({
                   className={`strategy-opt ${activeStrategy === preset.id ? "active" : ""}`}
                   onClick={() => {
                     onStrategyChange(preset.id);
+                    onStrategyDurationChange?.(null); // reset to new preset's default
                     setPendingTrade(null);
                     clearCardTimers();
                     setCardCountdown(null);
@@ -400,6 +409,36 @@ export default function StrategyPanel({
           {/* ── Strategy description ── */}
           {activePreset && (
             <div className="strategy-description">{activePreset.description}</div>
+          )}
+
+          {/* ── Duration Selector ── */}
+          {activePreset && activePreset.durationOptions && (
+            <div className="duration-selector">
+              <span className="duration-label">
+                Hold Duration
+                <TooltipIcon content="How long this strategy is expected to be active. Shown as a reminder — does not auto-close positions." />
+              </span>
+              <div className="duration-options">
+                {activePreset.durationOptions.map(mins => {
+                  const label = DURATION_LABELS[mins] || `${mins}m`;
+                  const isActive = effectiveDuration === mins;
+                  return (
+                    <button
+                      key={mins}
+                      className={`duration-opt ${isActive ? "active" : ""}`}
+                      onClick={() => onStrategyDurationChange?.(mins)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {durationLabel && (
+                <div className="duration-active-hint">
+                  ⏱ Strategy active for up to <strong>{durationLabel}</strong>
+                </div>
+              )}
+            </div>
           )}
 
           {/* ── Live Signal Display ── */}
