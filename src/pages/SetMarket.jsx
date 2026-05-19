@@ -279,6 +279,8 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
     </div>
   );
 }
+
+async function logTradeToD1(trade) {
   try {
     await fetch(`${WORKER}/api/trades`, {
       method: "POST",
