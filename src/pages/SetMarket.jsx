@@ -547,7 +547,7 @@ export default function SetMarket({
               <div className="panel-bottom-body">
 
                 {/* Positions zone */}
-                <div className="panel-bottom-zone positions-zone">
+                <div className={`panel-bottom-zone positions-zone ${posTab === "closed" ? "positions-zone--closed" : ""}`}>
 
                   {/* ── Open / Closed toggle ── */}
                   <div className="pos-tab-row">
