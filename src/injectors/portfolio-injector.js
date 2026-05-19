@@ -1,11 +1,12 @@
 /**
  * portfolio-injector.js
- * Phase 6 — Battlefield data layer (v2)
+ * Phase 6 — Battlefield data layer (v3)
  *
- * Fixed:
- * - fetchBattlefieldAdvisor now sends correct Worker payload
- * - computeUniqueLanes: one entry per unique symbol (not per position/trade)
- * - Timeline progress from position openedAt
+ * Changes from v2:
+ * - computeUniqueLanes: timeProgress now uses TODAY'S SESSION as full width
+ *   Gold: 09:00–17:00 ICT | SET: 10:00–17:00 ICT
+ *   bar = (now - session start) / session duration → same shared clock for all assets
+ * - All other logic unchanged
  */
 
 import config from "../../config.js";
@@ -15,6 +16,45 @@ const WORKER_TRADES = WORKER_BASE + config.workers.routes.trades;
 const WORKER_STRAT  = WORKER_BASE + config.workers.routes.strategy;
 
 export const DAILY_GOAL = 500;
+
+// ── Session clock helpers ─────────────────────────────────────────────────────
+
+/**
+ * Returns today's session window in UTC ms for a given market.
+ * Gold:  09:00–17:00 ICT = 02:00–10:00 UTC
+ * SET:   10:00–17:00 ICT = 03:00–10:00 UTC
+ */
+function getSessionWindow(market) {
+  const now    = new Date();
+  const y      = now.getUTCFullYear();
+  const m      = now.getUTCMonth();
+  const d      = now.getUTCDate();
+
+  if (market === "gold") {
+    return {
+      start: Date.UTC(y, m, d, 2, 0, 0),   // 09:00 ICT
+      end:   Date.UTC(y, m, d, 10, 0, 0),  // 17:00 ICT
+    };
+  } else {
+    // SET / MAI
+    return {
+      start: Date.UTC(y, m, d, 3, 0, 0),   // 10:00 ICT
+      end:   Date.UTC(y, m, d, 10, 0, 0),  // 17:00 ICT
+    };
+  }
+}
+
+/**
+ * Session progress: 0.0 (session not started) → 1.0 (session over).
+ * Clamped 0–1. Both markets use same right edge (17:00 ICT).
+ */
+function getSessionProgress(market) {
+  const now = Date.now();
+  const { start, end } = getSessionWindow(market);
+  if (now <= start) return 0;
+  if (now >= end)   return 1;
+  return (now - start) / (end - start);
+}
 
 // ── Fetch D1 trade history (on-demand only) ───────────────────────────────────
 
@@ -30,7 +70,7 @@ export async function fetchTradeHistory(from, to) {
   } catch { return []; }
 }
 
-// ── One lane per unique symbol from KV positions ──────────────────────────────
+// ── One lane per unique symbol ────────────────────────────────────────────────
 
 export function computeUniqueLanes(positions, activeStrategy, workflow, stageStatuses, activeStageIdx) {
   if (!Array.isArray(positions) || positions.length === 0) return [];
@@ -72,28 +112,30 @@ export function computeUniqueLanes(positions, activeStrategy, workflow, stageSta
     // Protocol: AI workflow > preset > position strategy
     if (workflow && !workflow.done) {
       const stage = workflow.stages?.[activeStageIdx];
-      lane.protocol      = `AI: ${workflow.name || "workflow"}`;
+      lane.protocol       = `AI: ${workflow.name || "workflow"}`;
       lane.protocolDetail = stage ? `S${activeStageIdx + 1} — ${stage.label || stage.action || ""}` : null;
-      lane.hasWorkflow   = true;
+      lane.hasWorkflow    = true;
     } else if (activeStrategy && activeStrategy !== "off") {
-      lane.protocol      = strategyName || activeStrategy;
+      lane.protocol       = strategyName || activeStrategy;
       lane.protocolDetail = null;
-      lane.hasWorkflow   = false;
+      lane.hasWorkflow    = false;
     } else {
-      lane.protocol      = lane.strategy !== "manual" ? lane.strategy : null;
+      lane.protocol       = lane.strategy !== "manual" ? lane.strategy : null;
       lane.protocolDetail = null;
-      lane.hasWorkflow   = false;
+      lane.hasWorkflow    = false;
     }
 
-    // Timeline: ms open vs 4-hr expected hold
-    const openMs     = lane.oldestOpenedAt ? Date.now() - new Date(lane.oldestOpenedAt).getTime() : 0;
-    lane.timeProgress = Math.min(1, openMs / (4 * 60 * 60 * 1000));
+    // ── Timeline: fraction of TODAY'S SESSION elapsed ──────────────────────
+    // Right edge = 17:00 ICT regardless of market.
+    // Both Gold and SET share the same right edge so the shared clock is meaningful.
+    // Bar shows "how far through today's session" — not how long position has been open.
+    lane.timeProgress = getSessionProgress(lane.market);
 
-    // Plan status from open P&L
+    // Plan status: based on open P&L vs cost
     const pnlPct = lane.totalCost > 0 ? lane.unrealisedPnL / lane.totalCost : 0;
-    if (pnlPct > 0.005)       lane.planStatus = "on_plan";
-    else if (pnlPct >= 0)     lane.planStatus = "late";
-    else                      lane.planStatus = "at_risk";
+    if (pnlPct > 0.005)   lane.planStatus = "on_plan";
+    else if (pnlPct >= 0) lane.planStatus = "late";
+    else                  lane.planStatus = "at_risk";
 
     return lane;
   });
@@ -101,14 +143,17 @@ export function computeUniqueLanes(positions, activeStrategy, workflow, stageSta
 
 function getStrategyDisplayName(key) {
   const names = {
-    ma_crossover: "MA Crossover", rsi_reversion: "RSI Mean Reversion",
-    breakout_volume: "Volume Breakout", golden_cross: "Golden / Death Cross",
-    support_bounce: "Support / Resistance Bounce", off: null,
+    ma_crossover:    "MA Crossover",
+    rsi_reversion:   "RSI Mean Reversion",
+    breakout_volume: "Volume Breakout",
+    golden_cross:    "Golden / Death Cross",
+    support_bounce:  "Support / Resistance Bounce",
+    off:             null,
   };
   return names[key] || key;
 }
 
-// ── Per-asset stats from D1 trades ────────────────────────────────────────────
+// ── Per-asset stats from D1 ───────────────────────────────────────────────────
 
 export function computeAssetStats(trades) {
   const map = {};
@@ -119,7 +164,7 @@ export function computeAssetStats(trades) {
       tradeCount: 0, winCount: 0, lossCount: 0,
       totalPnl: 0, totalInvested: 0, strategies: {}, lastTradeAt: null,
     };
-    const s = map[sym];
+    const s    = map[sym];
     const pnl  = parseFloat(t.pnl || 0);
     const cost = parseFloat(t.total_cost || t.totalCost || 0);
     s.tradeCount++; s.totalPnl += pnl;
@@ -132,8 +177,8 @@ export function computeAssetStats(trades) {
     if (ts && (!s.lastTradeAt || ts > s.lastTradeAt)) s.lastTradeAt = ts;
   });
   Object.values(map).forEach(s => {
-    s.winRate     = s.tradeCount > 0 ? Math.round((s.winCount / s.tradeCount) * 100) : 0;
-    s.returnRatio = s.totalInvested > 0 ? parseFloat((s.totalPnl / s.totalInvested * 100).toFixed(2)) : 0;
+    s.winRate      = s.tradeCount > 0 ? Math.round((s.winCount / s.tradeCount) * 100) : 0;
+    s.returnRatio  = s.totalInvested > 0 ? parseFloat((s.totalPnl / s.totalInvested * 100).toFixed(2)) : 0;
     s.bestStrategy = Object.entries(s.strategies).sort((a, b) => b[1].pnl - a[1].pnl)[0]?.[0] || null;
   });
   return map;
@@ -153,7 +198,7 @@ export function computeGoalProgress(trades) {
   };
 }
 
-// ── AI battlefield advisor — correct Worker payload ───────────────────────────
+// ── AI battlefield advisor ────────────────────────────────────────────────────
 
 export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgress, workflow, lanes }) {
   try {
@@ -170,7 +215,6 @@ export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgr
 
     const gp = goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 };
 
-    // Build the prompt — sent as `prompt` field which Worker requires
     const prompt = `BATTLEFIELD ADVISOR — helicopter view of my whole portfolio.
 
 LIVE POSITIONS (from KV):
@@ -180,13 +224,13 @@ HISTORICAL STATS (from D1 trades):
 ${statsLines || "No trade history loaded yet"}
 
 CASH AVAILABLE: ฿${Math.round(balance).toLocaleString()}
-DAILY GOAL: ฿${gp.goal} | Today realised P&L: ฿${gp.todayPnl} (${gp.pct}% of goal)
+DAILY GOAL: ฿${gp.goal} | Today realised P&L: ฿${gp.todayPnl} (${gp.pct}%)
 ACTIVE WORKFLOW: ${workflow ? `"${workflow.name || "unnamed"}" — ${workflow.stages?.length || 0} stages` : "none"}
 
 Give me a 3-sentence helicopter assessment:
 1. What is earning and what is bleeding capital right now
 2. The single biggest risk on this battlefield
-3. One concrete counter-measure I can execute immediately
+3. One concrete counter-measure to act on immediately
 
 Be specific with ฿ amounts. No fluff. No preamble.`;
 
@@ -211,14 +255,13 @@ Be specific with ฿ amounts. No fluff. No preamble.`;
     if (typeof d === "string") return d;
     if (d?.advice)  return d.advice;
     if (d?.summary) return d.summary;
-    // Worker returned a workflow object — extract readable summary
     if (d?.name && d?.stages) {
       return `Strategy "${d.name}" generated (${d.stages.length} stages). ` +
-        `For full execution, use AI Assist in the Gold or SET tab. ` +
-        `Key: ${d.stages[0]?.label || d.stages[0]?.action || "see workflow"}.`;
+        `For full execution use AI Assist in Gold/SET tab. ` +
+        `First stage: ${d.stages[0]?.label || d.stages[0]?.action || "see workflow"}.`;
     }
     return String(JSON.stringify(d)).slice(0, 400);
   } catch (err) {
-    return `AI advisor connection error: ${err.message}. Check Worker is deployed.`;
+    return `AI advisor error: ${err.message}. Check Worker is deployed.`;
   }
 }
