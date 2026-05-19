@@ -1881,3 +1881,27 @@ a { color: var(--gold); }
   border-radius: var(--radius-sm); color: var(--text-secondary); transition: all .15s;
 }
 .bf2-nav-btn:hover { border-color: rgba(255,255,255,0.2); color: var(--text-primary); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Phase 6 additions — Fix 1 (duration selector expanded) + Fix 4/6 (watchlist
+   search hover states + focus) — replaces compact one-liners added earlier
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Fix 1: Duration Selector (expanded, replaces compact version above) ── */
+.duration-selector {
+  margin: 8px 0 4px;
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.duration-opt:hover  { border-color: var(--gold); color: var(--gold); }
+.duration-active-hint { margin-top: 5px; }
+
+/* ── Fix 4+6: Watchlist search hover + focus states ──────────────────────── */
+.wl-tier-btn { white-space: nowrap; transition: all 0.15s; }
+.wl-tier-btn:hover  { border-color: var(--accent, #60a5fa); color: var(--accent, #60a5fa); }
+.wl-tier-btn.active { background: var(--accent, #3b82f6); color: #fff; border-color: var(--accent, #3b82f6); }
+.wl-search-input:focus { border-color: var(--gold); outline: none; }
+.wl-search-input { outline: none; }
+.wl-search-clear:hover { color: var(--text-primary); }
