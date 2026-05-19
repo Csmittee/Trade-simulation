@@ -16,7 +16,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import GoldMarket from "./GoldMarket.jsx";
-import SetMarket  from "./SetMarket.jsx";
+import SetMarket   from "./SetMarket.jsx";
+import Portfolio   from "./Portfolio.jsx";
+
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { createPortfolio, resetPortfolio, calcPortfolioSummary, isMarketOpen } from "../core/portfolio-engine.js";
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
@@ -544,12 +546,11 @@ export default function Dashboard() {
         {TABS.map(({ key, label, icon }) => (
           <button
             key={key}
-            className={`tab-btn ${activeTab === key ? "active" : ""} ${key === "portfolio" ? "coming-soon" : ""}`}
+            className={`tab-btn ${activeTab === key ? "active" : ""}`}
             onClick={() => setActiveTab(key)}
           >
             <span>{icon}</span>
             <span>{label}</span>
-            {key === "portfolio" && <span className="coming-tag">Phase 5</span>}
           </button>
         ))}
       </nav>
@@ -559,11 +560,14 @@ export default function Dashboard() {
         {activeTab === "gold" && <GoldMarket {...sharedMarketProps} />}
         {activeTab === "set"  && <SetMarket  {...sharedMarketProps} />}
         {activeTab === "portfolio" && (
-          <div className="coming-soon-page">
-            <div className="coming-icon">💼</div>
-            <h2>Portfolio View — Phase 5</h2>
-            <p>Pipeline dashboard, budget allocation, and ฿500/day goal tracker coming next.</p>
-          </div>
+          <Portfolio
+            portfolio={portfolio}
+            workflow={workflow}
+            activeStrategy={activeStrategy}
+            autoExecute={autoExecute}
+            activityEvents={activityEvents}
+            onTabSwitch={setActiveTab}
+          />
         )}
       </main>
 
