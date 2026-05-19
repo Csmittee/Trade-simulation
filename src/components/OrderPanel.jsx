@@ -41,9 +41,17 @@ export default function OrderPanel({
   market, currentPrice, portfolio,
   onBuy, onSell, marketOpen, enforceHours, onAIStrategy,
   orderMode, onOrderModeChange,
-  recentCloses = [],   // last 10 closes passed from market page
-  selectedSymbol = "", // e.g. "PTT.BK" or "THAI_GOLD_BAHT"
-  onLogActivity,       // optional — logs to ActivityLog
+  recentCloses = [],
+  selectedSymbol = "",
+  onLogActivity,
+  aiWorkflowActive = false,
+  workflow, setWorkflow,
+  stageStatuses, setStageStatuses,
+  activeStageIdx, setActiveStageIdx,
+  consecutiveRed, setConsecutiveRed,
+  workflowDone, setWorkflowDone,
+  fallbackTriggered, setFallbackTriggered,
+  stagePnl, setStagePnl,
 }) {
   // Manual tab state
   const [side, setSide]             = useState("buy");
@@ -60,14 +68,7 @@ export default function OrderPanel({
   const [aiPrompt, setAiPrompt]         = useState("");
   const [aiLoading, setAiLoading]       = useState(false);
   const [aiError, setAiError]           = useState(null);
-  const [workflow, setWorkflow]         = useState(null);      // built workflow object
-  const [chatCollapsed, setChatCollapsed] = useState(false);   // collapse chat after workflow built
-  const [stageStatuses, setStageStatuses] = useState([]);      // per-stage status
-  const [activeStageIdx, setActiveStageIdx] = useState(0);
-  const [consecutiveRed, setConsecutiveRed] = useState(0);
-  const [workflowDone, setWorkflowDone]     = useState(false);
-  const [fallbackTriggered, setFallbackTriggered] = useState(false);
-  const [stagePnl, setStagePnl]             = useState([]);    // actual ฿ result per stage (filled after done)
+
   const workflowRef = useRef(null);
 
   useEffect(() => {
@@ -277,8 +278,12 @@ export default function OrderPanel({
 
       {/* ── Tabs: Manual | AI Assist ── */}
       <div className="mode-selector">
-        <button className={`mode-btn ${mode === "manual" ? "active" : ""}`} onClick={() => onOrderModeChange("manual")}>
-          Manual
+       <button
+          className={`mode-btn ${mode === "manual" ? "active" : ""} ${aiWorkflowActive ? "disabled-tab" : ""}`}
+          onClick={() => !aiWorkflowActive && onOrderModeChange("manual")}
+          title={aiWorkflowActive ? "AI Workflow active — manual locked" : ""}
+        >
+          {aiWorkflowActive && mode === "manual" ? "🔒 Manual" : "Manual"}
         </button>
         <button className={`mode-btn ${mode === "ai" ? "active" : ""}`} onClick={() => onOrderModeChange("ai")}>
           ✦ AI Assist
