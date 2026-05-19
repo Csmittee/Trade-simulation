@@ -44,14 +44,15 @@ export default function OrderPanel({
   recentCloses = [],
   selectedSymbol = "",
   onLogActivity,
-  aiWorkflowActive = false,
-  workflow, setWorkflow,
-  stageStatuses, setStageStatuses,
-  activeStageIdx, setActiveStageIdx,
-  consecutiveRed, setConsecutiveRed,
-  workflowDone, setWorkflowDone,
+  aiWorkflowActive = false,  // Fix 3 — manual tab lock
+  // Fix 2 — workflow state lifted to Dashboard (no longer local)
+  workflow,          setWorkflow,
+  stageStatuses,     setStageStatuses,
+  activeStageIdx,    setActiveStageIdx,
+  consecutiveRed,    setConsecutiveRed,
+  workflowDone,      setWorkflowDone,
   fallbackTriggered, setFallbackTriggered,
-  stagePnl, setStagePnl,
+  stagePnl,          setStagePnl,
 }) {
   // Manual tab state
   const [side, setSide]             = useState("buy");
@@ -64,11 +65,12 @@ export default function OrderPanel({
   const [warning, setWarning]       = useState(null);
   const [manualCollapsed, setManualCollapsed] = useState(true); // always start collapsed
 
-  // AI tab state
-  const [aiPrompt, setAiPrompt]         = useState("");
-  const [aiLoading, setAiLoading]       = useState(false);
-  const [aiError, setAiError]           = useState(null);
-
+  // AI tab state — local only (UI state, doesn't need cross-tab persistence)
+  const [aiPrompt, setAiPrompt]           = useState("");
+  const [aiLoading, setAiLoading]         = useState(false);
+  const [aiError, setAiError]             = useState(null);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+  // workflow, stageStatuses, etc. are now PROPS from Dashboard (Fix 2 — Phase 6)
   const workflowRef = useRef(null);
 
   useEffect(() => {
@@ -278,12 +280,12 @@ export default function OrderPanel({
 
       {/* ── Tabs: Manual | AI Assist ── */}
       <div className="mode-selector">
-       <button
+        <button
           className={`mode-btn ${mode === "manual" ? "active" : ""} ${aiWorkflowActive ? "disabled-tab" : ""}`}
-          onClick={() => !aiWorkflowActive && onOrderModeChange("manual")}
-          title={aiWorkflowActive ? "AI Workflow active — manual locked" : ""}
+          onClick={() => { if (!aiWorkflowActive) onOrderModeChange("manual"); }}
+          title={aiWorkflowActive ? "AI Workflow active — manual trading locked" : ""}
         >
-          {aiWorkflowActive && mode === "manual" ? "🔒 Manual" : "Manual"}
+          {aiWorkflowActive ? "🔒 Manual" : "Manual"}
         </button>
         <button className={`mode-btn ${mode === "ai" ? "active" : ""}`} onClick={() => onOrderModeChange("ai")}>
           ✦ AI Assist
