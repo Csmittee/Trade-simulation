@@ -242,31 +242,13 @@ export default function SetMarket({
       {/* ── Main Body ── */}
       <div className="market-body">
 
-        {/* Watchlist */}
+       {/* Watchlist — search + tier filter */}
         <div className="panel-watchlist">
-          <div className="watchlist-panel">
-            <div className="section-title">
-              Watchlist
-              <TooltipIcon content="8 major SET/MAI stocks. Click to view chart and trade. Prices 15-min delayed." />
-            </div>
-            <div className="watchlist-list">
-              {WATCHLIST.map(sym => (
-                <WatchlistRow
-                  key={sym}
-                  symbol={sym}
-                  quote={watchlistData[sym]}
-                  isActive={sym === activeSymbol}
-                  onClick={handleSymbolChange}
-                />
-              ))}
-            </div>
-            <div className="set-market-info">
-              <div className="info-item">⏰ Session 1: 10:00–12:30 ICT</div>
-              <div className="info-item">⏰ Session 2: 14:30–17:00 ICT</div>
-              <div className="info-item">📦 Min lot: 100 shares</div>
-              <div className="info-item">💸 Commission: 0.157% + VAT</div>
-            </div>
-          </div>
+          <WatchlistPanel
+            activeSymbol={activeSymbol}
+            watchlistData={watchlistData}
+            onSymbolChange={handleSymbolChange}
+          />
         </div>
 
         {/* Left column */}
@@ -330,7 +312,9 @@ export default function SetMarket({
 
                 {/* Positions zone */}
                 <div className="panel-bottom-zone positions-zone">
-
+                <div className="panel-bottom-section-title">
+                  Positions — SET
+                </div>
                   {/* ── Open / Closed toggle ── */}
                   <div className="pos-tab-row">
                     <button
