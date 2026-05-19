@@ -16,9 +16,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import GoldMarket from "./GoldMarket.jsx";
-import SetMarket   from "./SetMarket.jsx";
-import Portfolio   from "./Portfolio.jsx";
-
+import SetMarket  from "./SetMarket.jsx";
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { createPortfolio, resetPortfolio, calcPortfolioSummary, isMarketOpen } from "../core/portfolio-engine.js";
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
@@ -187,6 +185,7 @@ const TABS = [
 const EMPTY_BUNDLE = {
   activeStrategy:    "off",
   autoExecute:       false,
+  strategyDuration:  null,   // minutes — null means use preset default
   workflow:          null,
   stageStatuses:     [],
   activeStageIdx:    0,
@@ -204,8 +203,9 @@ export default function Dashboard() {
   const [bootstrapped,  setBootstrapped]  = useState(false);
 
   // ── Strategy state (lifted from StrategyPanel — Phase 5) ─────────────────
-  const [activeStrategy, setActiveStrategy] = useState("off");
-  const [autoExecute,    setAutoExecute]    = useState(false);
+  const [activeStrategy,   setActiveStrategy]   = useState("off");
+  const [autoExecute,      setAutoExecute]      = useState(false);
+  const [strategyDuration, setStrategyDuration] = useState(null); // minutes; null = preset default
 
   // ── AI workflow state (lifted — BUG002) ───────────────────────────────────
   const [workflow,          setWorkflow]          = useState(null);
@@ -253,6 +253,7 @@ export default function Dashboard() {
           const b = JSON.parse(savedBundle);
           if (b.activeStrategy !== undefined)    setActiveStrategy(b.activeStrategy);
           if (b.autoExecute !== undefined)        setAutoExecute(Boolean(b.autoExecute));
+          if (b.strategyDuration !== undefined)   setStrategyDuration(b.strategyDuration ?? null);
           if (b.workflow)                         setWorkflow(b.workflow);
           if (Array.isArray(b.stageStatuses))     setStageStatuses(b.stageStatuses);
           if (b.activeStageIdx !== undefined)     setActiveStageIdx(Number(b.activeStageIdx) || 0);
@@ -309,6 +310,7 @@ export default function Dashboard() {
     kvSetSetting(BUNDLE_KEY, JSON.stringify({
       activeStrategy:    activeStrategy || "off",
       autoExecute,
+      strategyDuration:  strategyDuration ?? null,
       workflow:          workflow || null,
       stageStatuses,
       activeStageIdx,
@@ -318,7 +320,7 @@ export default function Dashboard() {
       stagePnl,
     }));
   }, [
-    activeStrategy, autoExecute, workflow, stageStatuses,
+    activeStrategy, autoExecute, strategyDuration, workflow, stageStatuses,
     activeStageIdx, consecutiveRed, workflowDone, fallbackTriggered, stagePnl,
   ]);
 
@@ -333,6 +335,7 @@ export default function Dashboard() {
     // Clear all strategy state in memory
     setActiveStrategy("off");
     setAutoExecute(false);
+    setStrategyDuration(null);
     setWorkflow(null);
     setStageStatuses([]);
     setActiveStageIdx(0);
@@ -440,6 +443,8 @@ export default function Dashboard() {
     onStrategyChange:    setActiveStrategy,
     autoExecute,
     onAutoExecuteChange: setAutoExecute,
+    strategyDuration,
+    onStrategyDurationChange: setStrategyDuration,
     activityEvents,
     onActivityEvent:     handleActivityEvent,
     onLoadMoreLogs:      handleLoadMoreLogs,
@@ -546,11 +551,12 @@ export default function Dashboard() {
         {TABS.map(({ key, label, icon }) => (
           <button
             key={key}
-            className={`tab-btn ${activeTab === key ? "active" : ""}`}
+            className={`tab-btn ${activeTab === key ? "active" : ""} ${key === "portfolio" ? "coming-soon" : ""}`}
             onClick={() => setActiveTab(key)}
           >
             <span>{icon}</span>
             <span>{label}</span>
+            {key === "portfolio" && <span className="coming-tag">Phase 5</span>}
           </button>
         ))}
       </nav>
@@ -560,18 +566,12 @@ export default function Dashboard() {
         {activeTab === "gold" && <GoldMarket {...sharedMarketProps} />}
         {activeTab === "set"  && <SetMarket  {...sharedMarketProps} />}
         {activeTab === "portfolio" && (
-  <Portfolio
-    portfolio={portfolio}
-    workflow={workflow}
-    activeStrategy={activeStrategy}
-    autoExecute={autoExecute}
-    activityEvents={activityEvents}
-    stageStatuses={stageStatuses}
-    activeStageIdx={activeStageIdx}
-    workflowDone={workflowDone}
-    onTabSwitch={setActiveTab}
-  />
-)}
+          <div className="coming-soon-page">
+            <div className="coming-icon">💼</div>
+            <h2>Portfolio View — Phase 5</h2>
+            <p>Pipeline dashboard, budget allocation, and ฿500/day goal tracker coming next.</p>
+          </div>
+        )}
       </main>
 
       {/* ── Reset Dialog ── */}

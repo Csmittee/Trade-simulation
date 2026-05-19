@@ -53,6 +53,8 @@ export default function GoldMarket({
   onStrategyChange,
   autoExecute,
   onAutoExecuteChange,
+  strategyDuration,
+  onStrategyDurationChange,
   activityEvents,
   onActivityEvent,
   onLoadMoreLogs,
@@ -468,6 +470,8 @@ export default function GoldMarket({
           onStrategyChange={onStrategyChange}
           autoExecute={autoExecute}
           onAutoExecuteChange={onAutoExecuteChange}
+          strategyDuration={strategyDuration}
+          onStrategyDurationChange={onStrategyDurationChange}
           onExecuteBuy={handleStrategyBuy}
           onExecuteSell={handleStrategySell}
           onStrategyEvent={handleStrategyEvent}

@@ -20,10 +20,287 @@ import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
 import config from "../../config.js";
 
-const WATCHLIST = config.data.set.watchlistDefault;
-const WORKER    = config.workers.base;
+/**
+ * SetMarket.jsx
+ * Phase 6 patch:
+ * - strategyDuration / onStrategyDurationChange props wired (Fix 1 — L054)
+ * - AI workflow state uses Dashboard props instead of OrderPanel local state (Fix 2)
+ * - Fix 4 + Fix 6: Watchlist replaced with search input + tier filter (Top 50 / Top 100 / All SET)
+ * - Fix 5: Removed duplicate section header in Closed positions tab
+ */
 
-async function logTradeToD1(trade) {
+import { useState, useCallback, useMemo } from "react";
+import ChartPanel    from "../components/ChartPanel.jsx";
+import OrderPanel    from "../components/OrderPanel.jsx";
+import StrategyPanel from "../components/StrategyPanel.jsx";
+import ActivityLog   from "../components/ActivityLog.jsx";
+import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
+import { useSetMarket } from "../injectors/set-injector.js";
+import { useFetchIntel } from "../injectors/intel-injector.js";
+import { calcPortfolioSummary, calcHourlyPnL, executeSellQty } from "../core/portfolio-engine.js";
+import { makeActivityEvent } from "../components/ActivityLog.jsx";
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
+import config from "../../config.js";
+
+const WORKER = config.workers.base;
+
+// ── SET/MAI universe (Top 50, Top 100, and extended list) ────────────────────
+// Format: { ticker: string, name: string, tier: 1|2|3 }
+// tier 1 = Top 50 by market cap, tier 2 = Top 100, tier 3 = rest of SET/MAI
+const SET_UNIVERSE = [
+  // ── Top 50 ──────────────────────────────────────────────────────────────
+  { t: "PTT.BK",     n: "PTT",                   tier: 1 },
+  { t: "AOT.BK",     n: "Airports of Thailand",  tier: 1 },
+  { t: "ADVANC.BK",  n: "Advanced Info Service",  tier: 1 },
+  { t: "KBANK.BK",   n: "Kasikorn Bank",          tier: 1 },
+  { t: "SCB.BK",     n: "SCB (Siam Commercial)",  tier: 1 },
+  { t: "BBL.BK",     n: "Bangkok Bank",            tier: 1 },
+  { t: "PTTEP.BK",   n: "PTT Exploration & Prod", tier: 1 },
+  { t: "GULF.BK",    n: "Gulf Energy Dev",         tier: 1 },
+  { t: "TRUE.BK",    n: "True Corporation",        tier: 1 },
+  { t: "CPF.BK",     n: "Charoen Pokphand Foods",  tier: 1 },
+  { t: "CPALL.BK",   n: "CP All",                  tier: 1 },
+  { t: "SCC.BK",     n: "Siam Cement",             tier: 1 },
+  { t: "DELTA.BK",   n: "Delta Electronics TH",    tier: 1 },
+  { t: "BDMS.BK",    n: "Bangkok Dusit Med",        tier: 1 },
+  { t: "BH.BK",      n: "Bumrungrad Hospital",      tier: 1 },
+  { t: "INTUCH.BK",  n: "Intouch Holdings",         tier: 1 },
+  { t: "HMPRO.BK",   n: "Home Product Center",      tier: 1 },
+  { t: "BGRIM.BK",   n: "B.Grimm Power",            tier: 1 },
+  { t: "BTS.BK",     n: "BTS Group Holdings",       tier: 1 },
+  { t: "IVL.BK",     n: "Indorama Ventures",        tier: 1 },
+  { t: "MINT.BK",    n: "Minor International",       tier: 1 },
+  { t: "RATCH.BK",   n: "Ratch Group",              tier: 1 },
+  { t: "GPSC.BK",    n: "Global Power Synergy",     tier: 1 },
+  { t: "TTB.BK",     n: "TMBThanachart Bank",        tier: 1 },
+  { t: "TOP.BK",     n: "Thai Oil",                 tier: 1 },
+  { t: "PTTGC.BK",   n: "PTT Global Chemical",      tier: 1 },
+  { t: "KTB.BK",     n: "Krungthai Bank",           tier: 1 },
+  { t: "BAM.BK",     n: "Bangkok Asset Mgmt",       tier: 1 },
+  { t: "CPN.BK",     n: "Central Pattana",          tier: 1 },
+  { t: "CENTEL.BK",  n: "Central Plaza Hotel",      tier: 1 },
+  { t: "MTC.BK",     n: "Muangthai Capital",        tier: 1 },
+  { t: "SAWAD.BK",   n: "Sawad Corp",               tier: 1 },
+  { t: "AP.BK",      n: "AP Thailand",              tier: 1 },
+  { t: "LH.BK",      n: "Land and Houses",          tier: 1 },
+  { t: "QH.BK",      n: "Quality Houses",           tier: 1 },
+  { t: "TISCO.BK",   n: "TISCO Financial",          tier: 1 },
+  { t: "KTC.BK",     n: "Krungthai Card",           tier: 1 },
+  { t: "SPRC.BK",    n: "Star Petroleum Refining",  tier: 1 },
+  { t: "TU.BK",      n: "Thai Union Group",         tier: 1 },
+  { t: "MAKRO.BK",   n: "Makro",                    tier: 1 },
+  { t: "OR.BK",      n: "PTT Oil & Retail",         tier: 1 },
+  { t: "WHA.BK",     n: "WHA Corporation",          tier: 1 },
+  { t: "AMATA.BK",   n: "Amata Corp",               tier: 1 },
+  { t: "JMT.BK",     n: "JMT Network Services",     tier: 1 },
+  { t: "TIDLOR.BK",  n: "Ngern Tid Lor",            tier: 1 },
+  { t: "BJC.BK",     n: "Berli Jucker",             tier: 1 },
+  { t: "GLOBAL.BK",  n: "Siam Global House",        tier: 1 },
+  { t: "STGT.BK",    n: "Sri Trang Gloves",         tier: 1 },
+  { t: "OSP.BK",     n: "Osotspa",                  tier: 1 },
+  { t: "SCGP.BK",    n: "SCG Packaging",            tier: 1 },
+  // ── Top 51–100 ──────────────────────────────────────────────────────────
+  { t: "BANPU.BK",   n: "Banpu",                    tier: 2 },
+  { t: "BCPG.BK",    n: "BCPG",                     tier: 2 },
+  { t: "BKD.BK",     n: "Bangkok Commercial",       tier: 2 },
+  { t: "CIMBT.BK",   n: "CIMB Thai",                tier: 2 },
+  { t: "COM7.BK",    n: "COM7",                      tier: 2 },
+  { t: "CRC.BK",     n: "Central Retail Corp",      tier: 2 },
+  { t: "DOHOME.BK",  n: "Dohome",                   tier: 2 },
+  { t: "EASON.BK",   n: "Eastern Water",            tier: 2 },
+  { t: "EGCO.BK",    n: "Electricity Generating",   tier: 2 },
+  { t: "EPG.BK",     n: "Eastern Polymer Group",    tier: 2 },
+  { t: "ERW.BK",     n: "ERW (Erawan Group)",       tier: 2 },
+  { t: "GFPT.BK",    n: "GFPT",                     tier: 2 },
+  { t: "GLOW.BK",    n: "GLOW Energy",              tier: 2 },
+  { t: "IMPACT.BK",  n: "Impact Growth REIT",       tier: 2 },
+  { t: "IRPC.BK",    n: "IRPC",                     tier: 2 },
+  { t: "ITD.BK",     n: "Italian-Thai Dev",         tier: 2 },
+  { t: "KAMART.BK",  n: "K-Art",                    tier: 2 },
+  { t: "LANNA.BK",   n: "Lanna Resources",          tier: 2 },
+  { t: "MAJOR.BK",   n: "Major Cineplex",           tier: 2 },
+  { t: "PLANB.BK",   n: "Plan B Media",             tier: 2 },
+  { t: "PS.BK",      n: "Pruksa Holding",           tier: 2 },
+  { t: "PSH.BK",     n: "Pruksa Real Estate",       tier: 2 },
+  { t: "PTG.BK",     n: "PTG Energy",               tier: 2 },
+  { t: "ROBINS.BK",  n: "Robinson Lifestyle",       tier: 2 },
+  { t: "SAMART.BK",  n: "Samart Corp",              tier: 2 },
+  { t: "SCCC.BK",    n: "Siam City Cement",         tier: 2 },
+  { t: "SEAFCO.BK",  n: "Seafco",                   tier: 2 },
+  { t: "SF.BK",      n: "SF Corporation",           tier: 2 },
+  { t: "SINGER.BK",  n: "Singer Thailand",          tier: 2 },
+  { t: "SMPC.BK",    n: "Seamico Securities",       tier: 2 },
+  { t: "SNP.BK",     n: "S&P Syndicate",            tier: 2 },
+  { t: "SPAL.BK",    n: "Standard Industries",      tier: 2 },
+  { t: "SPW.BK",     n: "Sahaviriya Steel",         tier: 2 },
+  { t: "STA.BK",     n: "Sri Trang Agro",           tier: 2 },
+  { t: "STEC.BK",    n: "Sino-Thai Engineering",    tier: 2 },
+  { t: "SUSCO.BK",   n: "Susco",                    tier: 2 },
+  { t: "SYNTEC.BK",  n: "Syntec Construction",      tier: 2 },
+  { t: "TASCO.BK",   n: "Tipco Asphalt",            tier: 2 },
+  { t: "TCAP.BK",    n: "Thanachart Capital",       tier: 2 },
+  { t: "THAI.BK",    n: "Thai Airways",             tier: 2 },
+  { t: "THAIBEV.BK", n: "Thai Beverage",            tier: 2 },
+  { t: "THANI.BK",   n: "Ratchthani Leasing",       tier: 2 },
+  { t: "TMT.BK",     n: "Thai Metal Trade",         tier: 2 },
+  { t: "TOG.BK",     n: "Thai Optical Group",       tier: 2 },
+  { t: "TPIPL.BK",   n: "TPI Polene",               tier: 2 },
+  { t: "TQM.BK",     n: "TQM Corp",                 tier: 2 },
+  { t: "TSTE.BK",    n: "Thai Steel Cable",         tier: 2 },
+  { t: "TTA.BK",     n: "Thoresen Thai",            tier: 2 },
+  { t: "TWZ.BK",     n: "TWZ Corp",                 tier: 2 },
+  { t: "TWPC.BK",    n: "Thai Wah",                 tier: 2 },
+  // ── Extended SET/MAI (tier 3) ───────────────────────────────────────────
+  { t: "ACAP.BK",    n: "Asia Capital Group",       tier: 3 },
+  { t: "ACE.BK",     n: "ACE (Alt. Current Energy)",tier: 3 },
+  { t: "AEONTS.BK",  n: "AEON Thana Sinsap",        tier: 3 },
+  { t: "AIRA.BK",    n: "AIRA Capital",             tier: 3 },
+  { t: "AKP.BK",     n: "Akkhapat Group",           tier: 3 },
+  { t: "ALLA.BK",    n: "All Seasons Property",     tier: 3 },
+  { t: "ANI.BK",     n: "Asian Nat. Inno",          tier: 3 },
+  { t: "AON.BK",     n: "Amorn Print Group",        tier: 3 },
+  { t: "APP.BK",     n: "Asia Plus Group",          tier: 3 },
+  { t: "ARIP.BK",    n: "AR IP",                    tier: 3 },
+  { t: "ASK.BK",     n: "ASK Securities",           tier: 3 },
+  { t: "ASN.BK",     n: "Assetwise",                tier: 3 },
+  { t: "AUCT.BK",    n: "Auto Auction",             tier: 3 },
+  { t: "BA.BK",      n: "Bangkok Airways",          tier: 3 },
+  { t: "BAY.BK",     n: "Bank of Ayudhya",          tier: 3 },
+  { t: "BBW.BK",     n: "Bangkok Produce",          tier: 3 },
+  { t: "BCP.BK",     n: "Bangchak Corp",            tier: 3 },
+  { t: "BEAUTY.BK",  n: "Beauty Community",         tier: 3 },
+  { t: "BIG.BK",     n: "Big Camera Corp",          tier: 3 },
+  { t: "BJC.BK",     n: "Berli Jucker",             tier: 3 },
+  { t: "BLA.BK",     n: "Bangkok Life",             tier: 3 },
+  { t: "BLAND.BK",   n: "Bangkok Land",             tier: 3 },
+  { t: "BOL.BK",     n: "Berli Jucker (BOL)",       tier: 3 },
+  { t: "BR.BK",      n: "Bangkok Ranch",            tier: 3 },
+  { t: "BRR.BK",     n: "Bangkok Rubber",           tier: 3 },
+  { t: "BROOK.BK",   n: "Brooker Group",            tier: 3 },
+  { t: "CCET.BK",    n: "CC&E Textile",             tier: 3 },
+  { t: "CEN.BK",     n: "Central Retail (CEN)",     tier: 3 },
+  { t: "CFRESH.BK",  n: "Cfresh Industry",          tier: 3 },
+  { t: "CHATCHAI.BK",n: "Chatchai Charoenwong",     tier: 3 },
+  { t: "CHG.BK",     n: "Chularat Hospital",        tier: 3 },
+  { t: "CMAN.BK",    n: "Chemical Management",      tier: 3 },
+  { t: "CMO.BK",     n: "CMO",                      tier: 3 },
+  { t: "CNT.BK",     n: "Central Nichi Thai",       tier: 3 },
+  { t: "COLOR.BK",   n: "Color Image Apparel",      tier: 3 },
+  { t: "CRANE.BK",   n: "Crane Heavy Industry",     tier: 3 },
+  { t: "CSL.BK",     n: "Country Steel",            tier: 3 },
+  { t: "CYBX.BK",    n: "CyberX Technology",        tier: 3 },
+  { t: "DCC.BK",     n: "Daiichi Chuo Kisen",       tier: 3 },
+  { t: "DIGI.BK",    n: "Digital Telecoms",         tier: 3 },
+  { t: "DIMET.BK",   n: "Diamond International",    tier: 3 },
+  { t: "DRT.BK",     n: "Diamond Roofing Tiles",    tier: 3 },
+  { t: "DTAC.BK",    n: "DTAC",                     tier: 3 },
+  { t: "DTC.BK",     n: "Duraking",                 tier: 3 },
+  { t: "EARTH.BK",   n: "Earth Tech Environment",   tier: 3 },
+  { t: "EC.BK",      n: "Eurocraft",                tier: 3 },
+  { t: "EE.BK",      n: "Eastern Electrics",        tier: 3 },
+  { t: "EKH.BK",     n: "Ekachai Med Care",         tier: 3 },
+  { t: "ESSO.BK",    n: "ExxonMobil Thailand",      tier: 3 },
+  { t: "ETE.BK",     n: "Eastern Tech",             tier: 3 },
+  { t: "ETRON.BK",   n: "Etron",                    tier: 3 },
+];
+
+// ── Watchlist search + tier filter component ──────────────────────────────────
+const TIER_LABELS = { all: "All SET/MAI", "1": "Top 50", "2": "Top 100" };
+
+function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
+  const [query, setQuery]   = useState("");
+  const [tier,  setTier]    = useState("1");   // "1" | "2" | "all"
+
+  // Filter by tier first, then by query
+  const filtered = useMemo(() => {
+    const tierNum = tier === "all" ? null : parseInt(tier);
+    return SET_UNIVERSE.filter(s => {
+      if (tierNum && s.tier > tierNum) return false;
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return s.t.toLowerCase().includes(q) || s.n.toLowerCase().includes(q);
+    }).slice(0, 80); // max 80 rows to keep render fast
+  }, [query, tier]);
+
+  return (
+    <div className="watchlist-panel">
+      <div className="section-title">
+        SET / MAI
+        <TooltipIcon content="Search any SET or MAI listed stock by ticker or name. Filter by market cap tier for quick scalp targets." />
+      </div>
+
+      {/* Tier selector */}
+      <div className="wl-tier-row">
+        {Object.entries(TIER_LABELS).map(([key, label]) => (
+          <button
+            key={key}
+            className={`wl-tier-btn ${tier === key ? "active" : ""}`}
+            onClick={() => setTier(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Search input */}
+      <div className="wl-search-row">
+        <input
+          type="text"
+          className="wl-search-input"
+          placeholder="Search ticker or name…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+        />
+        {query && (
+          <button className="wl-search-clear" onClick={() => setQuery("")}>✕</button>
+        )}
+      </div>
+
+      {/* Results */}
+      <div className="watchlist-list">
+        {filtered.length === 0 ? (
+          <div className="wl-empty">No results for "{query}"</div>
+        ) : (
+          filtered.map(s => {
+            const quote   = watchlistData[s.t];
+            const changeUp = (quote?.changePct || 0) >= 0;
+            return (
+              <button
+                key={s.t}
+                className={`watchlist-row ${s.t === activeSymbol ? "active" : ""}`}
+                onClick={() => onSymbolChange(s.t)}
+              >
+                <div className="wl-left">
+                  <span className="wl-symbol">{s.t.replace(".BK", "")}</span>
+                  <span className="wl-name">{s.n}</span>
+                </div>
+                <div className="wl-right">
+                  {!quote ? (
+                    <span className="wl-loading">—</span>
+                  ) : (
+                    <>
+                      <span className="wl-price">฿{quote.price?.toFixed(2)}</span>
+                      <span className={`wl-change ${changeUp ? "up" : "down"}`}>
+                        {changeUp ? "▲" : "▼"} {Math.abs(quote.changePct || 0).toFixed(2)}%
+                      </span>
+                    </>
+                  )}
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      <div className="set-market-info">
+        <div className="info-item">⏰ Session 1: 10:00–12:30 ICT</div>
+        <div className="info-item">⏰ Session 2: 14:30–17:00 ICT</div>
+        <div className="info-item">📦 Min lot: 100 shares</div>
+        <div className="info-item">💸 Commission: 0.157% + VAT</div>
+      </div>
+    </div>
+  );
+}
   try {
     await fetch(`${WORKER}/api/trades`, {
       method: "POST",
@@ -43,29 +320,6 @@ async function fetchClosedFromD1(market) {
   } catch { return []; }
 }
 
-function WatchlistRow({ symbol, quote, isActive, onClick }) {
-  const changeUp = (quote?.changePct || 0) >= 0;
-  return (
-    <button className={`watchlist-row ${isActive ? "active" : ""}`} onClick={() => onClick(symbol)}>
-      <div className="wl-left">
-        <span className="wl-symbol">{symbol.replace(".BK", "")}</span>
-        {quote?.name && <span className="wl-name">{quote.name}</span>}
-      </div>
-      <div className="wl-right">
-        {!quote ? (
-          <span className="wl-loading">—</span>
-        ) : (
-          <>
-            <span className="wl-price">฿{quote.price?.toFixed(2)}</span>
-            <span className={`wl-change ${changeUp ? "up" : "down"}`}>
-              {changeUp ? "▲" : "▼"} {Math.abs(quote.changePct || 0).toFixed(2)}%
-            </span>
-          </>
-        )}
-      </div>
-    </button>
-  );
-}
 
 export default function SetMarket({
   portfolio,
@@ -76,6 +330,8 @@ export default function SetMarket({
   onStrategyChange,
   autoExecute,
   onAutoExecuteChange,
+  strategyDuration,
+  onStrategyDurationChange,
   activityEvents,
   onActivityEvent,
   onLoadMoreLogs,
@@ -242,7 +498,7 @@ export default function SetMarket({
       {/* ── Main Body ── */}
       <div className="market-body">
 
-       {/* Watchlist — search + tier filter */}
+        {/* Watchlist — search + tier filter (Fix 4 + Fix 6) */}
         <div className="panel-watchlist">
           <WatchlistPanel
             activeSymbol={activeSymbol}
@@ -312,9 +568,12 @@ export default function SetMarket({
 
                 {/* Positions zone */}
                 <div className="panel-bottom-zone positions-zone">
-                <div className="panel-bottom-section-title">
-                  Positions — SET
-                </div>
+
+                  {/* ── Section title (Fix 5 — prevents header overlap on Closed tab) ── */}
+                  <div className="panel-bottom-section-title" style={{ marginBottom: "4px" }}>
+                    Positions — SET
+                  </div>
+
                   {/* ── Open / Closed toggle ── */}
                   <div className="pos-tab-row">
                     <button
@@ -501,6 +760,8 @@ export default function SetMarket({
               onStrategyChange={onStrategyChange}
               autoExecute={autoExecute}
               onAutoExecuteChange={onAutoExecuteChange}
+              strategyDuration={strategyDuration}
+              onStrategyDurationChange={onStrategyDurationChange}
               onExecuteBuy={handleStrategyBuy}
               onExecuteSell={handleStrategySell}
               onStrategyEvent={handleStrategyEvent}
