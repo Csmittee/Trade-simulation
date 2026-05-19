@@ -1,17 +1,11 @@
 /**
  * portfolio-injector.js
- * Phase 6 — Battlefield data layer
+ * Phase 6 — Battlefield data layer (v2)
  *
- * Responsibilities:
- * - Fetch D1 trade history on demand (not on load — saves KV/D1 ops)
- * - Compute per-asset performance stats from closed trades
- * - Compute goal progress (฿500/day target)
- * - Provide AI battlefield advisor summary via /api/strategy
- *
- * Data flow:
- * - KV portfolio (positions, balance) → already loaded in Dashboard, passed as prop
- * - D1 trades → fetched only when user clicks "Load battlefield data"
- * - AI advisor → fetched only when user clicks "Get AI view"
+ * Fixed:
+ * - fetchBattlefieldAdvisor now sends correct Worker payload
+ * - computeUniqueLanes: one entry per unique symbol (not per position/trade)
+ * - Timeline progress from position openedAt
  */
 
 import config from "../../config.js";
@@ -20,16 +14,10 @@ const WORKER_BASE   = config.workers.base;
 const WORKER_TRADES = WORKER_BASE + config.workers.routes.trades;
 const WORKER_STRAT  = WORKER_BASE + config.workers.routes.strategy;
 
-const DAILY_GOAL = 500; // ฿500/day target
+export const DAILY_GOAL = 500;
 
-// ── Fetch D1 trade history ────────────────────────────────────────────────────
+// ── Fetch D1 trade history (on-demand only) ───────────────────────────────────
 
-/**
- * Fetch closed trades from D1 for a date range.
- * @param {string} from  ISO date string e.g. "2025-05-01"
- * @param {string} to    ISO date string e.g. "2025-05-19"
- * @returns {Array} raw trade rows
- */
 export async function fetchTradeHistory(from, to) {
   try {
     const url = new URL(WORKER_TRADES);
@@ -39,186 +27,198 @@ export async function fetchTradeHistory(from, to) {
     const res  = await fetch(url.toString());
     const json = await res.json();
     return json.success ? (json.data || []) : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-// ── Per-asset performance stats ───────────────────────────────────────────────
+// ── One lane per unique symbol from KV positions ──────────────────────────────
 
-/**
- * Given an array of D1 trade rows, compute per-symbol performance.
- * Returns a map: { "THAI_GOLD_BAHT": { ...stats }, "PTT.BK": { ...stats } }
- */
-export function computeAssetStats(trades) {
+export function computeUniqueLanes(positions, activeStrategy, workflow, stageStatuses, activeStageIdx) {
+  if (!Array.isArray(positions) || positions.length === 0) return [];
+
   const map = {};
 
-  trades.forEach(t => {
-    const sym = t.symbol || "unknown";
+  positions.forEach(pos => {
+    const sym = pos.symbol;
     if (!map[sym]) {
       map[sym] = {
-        symbol:       sym,
-        market:       t.market || "unknown",
-        tradeCount:   0,
-        winCount:     0,
-        lossCount:    0,
-        totalPnl:     0,
-        totalInvested: 0,
-        bestTrade:    null,
-        worstTrade:   null,
-        strategies:   {},
-        lastTradeAt:  null,
+        symbol:         sym,
+        market:         pos.market,
+        displayName:    sym === "THAI_GOLD_BAHT" ? "Thai Gold" : sym.replace(".BK", ""),
+        totalQty:       0,
+        totalCost:      0,
+        unrealisedPnL:  0,
+        currentPrice:   pos.currentPrice || pos.entryPrice,
+        strategy:       pos.strategy || "manual",
+        oldestOpenedAt: pos.openedAt,
+        positionCount:  0,
+        stopLoss:       pos.stopLoss,
+        takeProfit:     pos.takeProfit,
       };
     }
+    const lane = map[sym];
+    lane.totalQty      += pos.qty || 0;
+    lane.totalCost     += pos.totalCost || 0;
+    lane.unrealisedPnL += pos.unrealisedPnL || 0;
+    lane.positionCount++;
+    if (pos.openedAt && pos.openedAt < lane.oldestOpenedAt) lane.oldestOpenedAt = pos.openedAt;
+    if (pos.strategy && pos.strategy !== "manual") lane.strategy = pos.strategy;
+  });
 
-    const s = map[sym];
-    const pnl = parseFloat(t.pnl || 0);
-    const cost = parseFloat(t.total_cost || t.totalCost || 0);
+  const strategyName = getStrategyDisplayName(activeStrategy);
 
-    s.tradeCount++;
-    s.totalPnl     += pnl;
-    s.totalInvested = Math.max(s.totalInvested, cost); // peak capital used
+  return Object.values(map).map(lane => {
+    lane.avgEntry = lane.totalQty > 0 ? lane.totalCost / lane.totalQty : 0;
 
-    if (pnl > 0) {
-      s.winCount++;
-      if (!s.bestTrade || pnl > s.bestTrade.pnl) s.bestTrade = { pnl, ...t };
-    } else if (pnl < 0) {
-      s.lossCount++;
-      if (!s.worstTrade || pnl < s.worstTrade.pnl) s.worstTrade = { pnl, ...t };
+    // Protocol: AI workflow > preset > position strategy
+    if (workflow && !workflow.done) {
+      const stage = workflow.stages?.[activeStageIdx];
+      lane.protocol      = `AI: ${workflow.name || "workflow"}`;
+      lane.protocolDetail = stage ? `S${activeStageIdx + 1} — ${stage.label || stage.action || ""}` : null;
+      lane.hasWorkflow   = true;
+    } else if (activeStrategy && activeStrategy !== "off") {
+      lane.protocol      = strategyName || activeStrategy;
+      lane.protocolDetail = null;
+      lane.hasWorkflow   = false;
+    } else {
+      lane.protocol      = lane.strategy !== "manual" ? lane.strategy : null;
+      lane.protocolDetail = null;
+      lane.hasWorkflow   = false;
     }
 
-    // Strategy breakdown
+    // Timeline: ms open vs 4-hr expected hold
+    const openMs     = lane.oldestOpenedAt ? Date.now() - new Date(lane.oldestOpenedAt).getTime() : 0;
+    lane.timeProgress = Math.min(1, openMs / (4 * 60 * 60 * 1000));
+
+    // Plan status from open P&L
+    const pnlPct = lane.totalCost > 0 ? lane.unrealisedPnL / lane.totalCost : 0;
+    if (pnlPct > 0.005)       lane.planStatus = "on_plan";
+    else if (pnlPct >= 0)     lane.planStatus = "late";
+    else                      lane.planStatus = "at_risk";
+
+    return lane;
+  });
+}
+
+function getStrategyDisplayName(key) {
+  const names = {
+    ma_crossover: "MA Crossover", rsi_reversion: "RSI Mean Reversion",
+    breakout_volume: "Volume Breakout", golden_cross: "Golden / Death Cross",
+    support_bounce: "Support / Resistance Bounce", off: null,
+  };
+  return names[key] || key;
+}
+
+// ── Per-asset stats from D1 trades ────────────────────────────────────────────
+
+export function computeAssetStats(trades) {
+  const map = {};
+  trades.forEach(t => {
+    const sym = t.symbol || "unknown";
+    if (!map[sym]) map[sym] = {
+      symbol: sym, market: t.market || "unknown",
+      tradeCount: 0, winCount: 0, lossCount: 0,
+      totalPnl: 0, totalInvested: 0, strategies: {}, lastTradeAt: null,
+    };
+    const s = map[sym];
+    const pnl  = parseFloat(t.pnl || 0);
+    const cost = parseFloat(t.total_cost || t.totalCost || 0);
+    s.tradeCount++; s.totalPnl += pnl;
+    s.totalInvested = Math.max(s.totalInvested, cost);
+    if (pnl > 0) s.winCount++; else s.lossCount++;
     const strat = t.strategy || "manual";
     if (!s.strategies[strat]) s.strategies[strat] = { count: 0, pnl: 0 };
-    s.strategies[strat].count++;
-    s.strategies[strat].pnl += pnl;
-
+    s.strategies[strat].count++; s.strategies[strat].pnl += pnl;
     const ts = t.closed_at || t.closedAt;
     if (ts && (!s.lastTradeAt || ts > s.lastTradeAt)) s.lastTradeAt = ts;
   });
-
-  // Derive computed fields
   Object.values(map).forEach(s => {
-    s.winRate       = s.tradeCount > 0 ? Math.round((s.winCount / s.tradeCount) * 100) : 0;
-    s.returnRatio   = s.totalInvested > 0
-      ? parseFloat((s.totalPnl / s.totalInvested * 100).toFixed(2))
-      : 0;
-    s.bestStrategy  = Object.entries(s.strategies)
-      .sort((a, b) => b[1].pnl - a[1].pnl)[0]?.[0] || null;
-    s.activeStrategies = Object.keys(s.strategies);
+    s.winRate     = s.tradeCount > 0 ? Math.round((s.winCount / s.tradeCount) * 100) : 0;
+    s.returnRatio = s.totalInvested > 0 ? parseFloat((s.totalPnl / s.totalInvested * 100).toFixed(2)) : 0;
+    s.bestStrategy = Object.entries(s.strategies).sort((a, b) => b[1].pnl - a[1].pnl)[0]?.[0] || null;
   });
-
   return map;
 }
 
 // ── Goal progress ─────────────────────────────────────────────────────────────
 
-/**
- * Calculate today's P&L progress toward the ฿500/day goal.
- * Uses D1 trades closed today (ICT).
- */
 export function computeGoalProgress(trades) {
-  const nowIct = new Date(Date.now() + 7 * 60 * 60 * 1000);
-  const todayStr = nowIct.toISOString().slice(0, 10);
-
+  const todayStr = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
   const todayPnl = trades
-    .filter(t => {
-      const ts = t.closed_at || t.closedAt || "";
-      return ts.startsWith(todayStr);
-    })
+    .filter(t => (t.closed_at || t.closedAt || "").startsWith(todayStr))
     .reduce((sum, t) => sum + parseFloat(t.pnl || 0), 0);
-
   const pct = Math.min(100, Math.max(0, Math.round((todayPnl / DAILY_GOAL) * 100)));
-
   return {
-    todayPnl:   Math.round(todayPnl),
-    goal:       DAILY_GOAL,
-    pct,
-    status:     todayPnl >= DAILY_GOAL ? "achieved" : todayPnl > 0 ? "progress" : "behind",
+    todayPnl: Math.round(todayPnl), goal: DAILY_GOAL, pct,
+    status: todayPnl >= DAILY_GOAL ? "achieved" : todayPnl > 0 ? "progress" : "behind",
   };
 }
 
-// ── Swim lane plan status ─────────────────────────────────────────────────────
+// ── AI battlefield advisor — correct Worker payload ───────────────────────────
 
-/**
- * Determine plan status for a position in KV.
- * Returns "on_plan" | "late" | "at_risk" | "no_plan"
- */
-export function getPlanStatus(position, assetStats) {
-  if (!position) return "no_plan";
-  const stats = assetStats?.[position.symbol];
-  if (!stats) return "no_plan";
-
-  if (stats.winRate >= 60 && stats.totalPnl > 0) return "on_plan";
-  if (stats.winRate >= 40 || stats.totalPnl > 0)  return "late";
-  if (stats.tradeCount > 0)                        return "at_risk";
-  return "no_plan";
-}
-
-// ── AI battlefield advisor ────────────────────────────────────────────────────
-
-/**
- * Ask AI for a helicopter-view summary of the battlefield.
- * Sends portfolio + stats to /api/strategy and returns plain text.
- */
-export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgress, workflow }) {
+export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgress, workflow, lanes }) {
   try {
-    const prompt = buildAdvisorPrompt({ portfolio, assetStats, goalProgress, workflow });
-    const res  = await fetch(WORKER_STRAT, {
-      method:  "POST",
+    const balance  = portfolio?.balance || 0;
+    const posCount = portfolio?.positions?.length || 0;
+
+    const laneLines = (lanes || []).map(l =>
+      `${l.displayName}: cost ฿${Math.round(l.totalCost).toLocaleString()} | open P&L ฿${Math.round(l.unrealisedPnL).toLocaleString()} | protocol: ${l.protocol || "none"} | status: ${l.planStatus}`
+    ).join("\n");
+
+    const statsLines = Object.values(assetStats || {}).map(s =>
+      `${s.symbol}: ${s.tradeCount} trades | win ${s.winRate}% | total P&L ฿${Math.round(s.totalPnl)}`
+    ).join("\n");
+
+    const gp = goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 };
+
+    // Build the prompt — sent as `prompt` field which Worker requires
+    const prompt = `BATTLEFIELD ADVISOR — helicopter view of my whole portfolio.
+
+LIVE POSITIONS (from KV):
+${laneLines || "No open positions"}
+
+HISTORICAL STATS (from D1 trades):
+${statsLines || "No trade history loaded yet"}
+
+CASH AVAILABLE: ฿${Math.round(balance).toLocaleString()}
+DAILY GOAL: ฿${gp.goal} | Today realised P&L: ฿${gp.todayPnl} (${gp.pct}% of goal)
+ACTIVE WORKFLOW: ${workflow ? `"${workflow.name || "unnamed"}" — ${workflow.stages?.length || 0} stages` : "none"}
+
+Give me a 3-sentence helicopter assessment:
+1. What is earning and what is bleeding capital right now
+2. The single biggest risk on this battlefield
+3. One concrete counter-measure I can execute immediately
+
+Be specific with ฿ amounts. No fluff. No preamble.`;
+
+    const res = await fetch(WORKER_STRAT, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({
-        market:  "portfolio",
-        symbol:  "PORTFOLIO",
-        price:   0,
+      body: JSON.stringify({
         prompt,
-        mode:    "battlefield_advisor",
+        market:        "gold",
+        symbol:        "PORTFOLIO",
+        currentPrice:  0,
+        cashBalance:   balance,
+        openPositions: posCount,
+        recentCloses:  [],
       }),
     });
+
     const json = await res.json();
-    // Response may be raw text or structured
-    if (json.success && json.data) {
-      const d = json.data;
-      if (typeof d === "string") return d;
-      if (d.advice)  return d.advice;
-      if (d.message) return d.message;
-      return JSON.stringify(d);
+    if (!json.success) return `Worker error: ${json.error || "unknown"}`;
+
+    const d = json.data;
+    if (typeof d === "string") return d;
+    if (d?.advice)  return d.advice;
+    if (d?.summary) return d.summary;
+    // Worker returned a workflow object — extract readable summary
+    if (d?.name && d?.stages) {
+      return `Strategy "${d.name}" generated (${d.stages.length} stages). ` +
+        `For full execution, use AI Assist in the Gold or SET tab. ` +
+        `Key: ${d.stages[0]?.label || d.stages[0]?.action || "see workflow"}.`;
     }
-    return "AI advisor unavailable — check Worker logs.";
-  } catch {
-    return "AI advisor unavailable — network error.";
+    return String(JSON.stringify(d)).slice(0, 400);
+  } catch (err) {
+    return `AI advisor connection error: ${err.message}. Check Worker is deployed.`;
   }
-}
-
-function buildAdvisorPrompt({ portfolio, assetStats, goalProgress, workflow }) {
-  const positions = portfolio?.positions || [];
-  const balance   = portfolio?.balance || 0;
-  const posLines  = positions.map(p =>
-    `${p.symbol}: ${p.qty} units @ ฿${p.entryPrice} | unrealised P&L: ฿${Math.round(p.unrealisedPnL || 0)}`
-  ).join("\n");
-
-  const statsLines = Object.values(assetStats || {}).map(s =>
-    `${s.symbol}: ${s.tradeCount} trades | win rate ${s.winRate}% | total P&L ฿${Math.round(s.totalPnl)} | best strategy: ${s.bestStrategy || "none"}`
-  ).join("\n");
-
-  return `You are a helicopter-view trading advisor for a Thai paper trading simulator.
-
-PORTFOLIO:
-Cash balance: ฿${Math.round(balance).toLocaleString()}
-Open positions:
-${posLines || "None"}
-
-PERFORMANCE STATS (from trade history):
-${statsLines || "No history yet"}
-
-GOAL: ฿${goalProgress.goal}/day | Today P&L: ฿${goalProgress.todayPnl} (${goalProgress.pct}% of goal)
-
-${workflow ? `ACTIVE AI WORKFLOW: "${workflow.name || "unnamed"}" — ${workflow.stages?.length || 0} stages` : "No active AI workflow."}
-
-Give a concise battlefield assessment in 3 sentences max:
-1. What is working and what is bleeding capital
-2. The single biggest risk right now
-3. One concrete counter-measure to consider
-
-Be direct. Use ฿ amounts. No fluff.`;
 }
