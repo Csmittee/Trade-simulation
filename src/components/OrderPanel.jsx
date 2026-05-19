@@ -70,6 +70,8 @@ export default function OrderPanel({
   const [aiLoading, setAiLoading]         = useState(false);
   const [aiError, setAiError]             = useState(null);
   const [chatCollapsed, setChatCollapsed] = useState(false);
+  // Fix C — track whether Execute was clicked per stage before showing outcome buttons
+  const [stageExecuted, setStageExecuted] = useState([]);
   // workflow, stageStatuses, etc. are now PROPS from Dashboard (Fix 2 — Phase 6)
   const workflowRef = useRef(null);
 
@@ -193,6 +195,7 @@ export default function OrderPanel({
       setWorkflow(wf);
       setStageStatuses(wf.stages.map((_, i) => (i === 0 ? STATUS.ACTIVE : STATUS.PENDING)));
       setStagePnl(wf.stages.map(() => null));
+      setStageExecuted(wf.stages.map(() => false)); // Fix C — all stages start un-executed
       setChatCollapsed(true);
       onLogActivity?.({ type: "info", market, message: `✦ AI Workflow built: "${wf.workflowName}" — ${wf.stages.length} stages` });
     } catch (err) {
@@ -206,6 +209,7 @@ export default function OrderPanel({
     setWorkflow(null); setAiPrompt(""); setAiError(null);
     setStageStatuses([]); setActiveStageIdx(0); setConsecutiveRed(0);
     setWorkflowDone(false); setFallbackTriggered(false); setStagePnl([]);
+    setStageExecuted([]); // Fix C
     setChatCollapsed(false);
   }
 
@@ -272,6 +276,13 @@ export default function OrderPanel({
       // HOLD — no trade, just log
       onLogActivity?.({ type: "info", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: HOLD — no trade placed` });
     }
+
+    // Fix C — mark this stage as executed so outcome buttons appear
+    setStageExecuted(prev => {
+      const next = [...prev];
+      next[stageIdx] = true;
+      return next;
+    });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -484,8 +495,8 @@ export default function OrderPanel({
                           {/* Action buttons — only for active stage */}
                           {isActive && !workflowDone && (
                             <div className="wf-stage-actions">
-                              {/* Execute button */}
-                              {(stage.action !== "HOLD") && (
+                              {/* Execute button — only show if not yet executed */}
+                              {stage.action !== "HOLD" && !stageExecuted[idx] && (
                                 <button
                                   className="wf-exec-btn"
                                   onClick={() => executeStageAction(stage, idx)}
@@ -494,29 +505,31 @@ export default function OrderPanel({
                                   ▶ {stage.action === "BUY" || stage.action === "SCALE IN" ? "Execute Buy" : "Execute Sell/Exit"}
                                 </button>
                               )}
-                              {stage.action === "HOLD" && (
+                              {stage.action === "HOLD" && !stageExecuted[idx] && (
                                 <div className="wf-hold-note">◈ HOLD — no trade needed this stage</div>
                               )}
 
-                              {/* Outcome buttons (user marks result) */}
-                              <div className="wf-outcome-row">
-                                <span className="wf-outcome-label">Mark result:</span>
-                                <button
-                                  className="wf-outcome-btn win"
-                                  onClick={() => resolveStage(idx, "win")}
-                                  title="Stage hit target — move to next"
-                                >✓ Win</button>
-                                <button
-                                  className="wf-outcome-btn loss"
-                                  onClick={() => resolveStage(idx, "loss")}
-                                  title="Stage hit stop — move to next"
-                                >✗ Loss</button>
-                                <button
-                                  className="wf-outcome-btn skip"
-                                  onClick={() => resolveStage(idx, "skip")}
-                                  title="Skip this stage"
-                                >— Skip</button>
-                              </div>
+                              {/* Outcome buttons — only appear after Execute clicked (or HOLD) */}
+                              {(stageExecuted[idx] || stage.action === "HOLD") && (
+                                <div className="wf-outcome-row">
+                                  <span className="wf-outcome-label">Mark result:</span>
+                                  <button
+                                    className="wf-outcome-btn win"
+                                    onClick={() => resolveStage(idx, "win")}
+                                    title="Stage hit target — move to next"
+                                  >✓ Win</button>
+                                  <button
+                                    className="wf-outcome-btn loss"
+                                    onClick={() => resolveStage(idx, "loss")}
+                                    title="Stage hit stop — move to next"
+                                  >✗ Loss</button>
+                                  <button
+                                    className="wf-outcome-btn skip"
+                                    onClick={() => resolveStage(idx, "skip")}
+                                    title="Skip this stage"
+                                  >— Skip</button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
