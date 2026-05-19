@@ -1540,6 +1540,32 @@ a { color: var(--gold); }
   background: rgba(255,255,255,0.08);
   color: var(--text-primary);
 }
+.mode-btn.disabled-tab {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* ── Duration Selector (Fix 1) ── */
+.duration-selector { margin: 8px 0; }
+.duration-label { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.duration-options { display: flex; gap: 4px; flex-wrap: wrap; }
+.duration-opt { padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.duration-opt.active { background: var(--gold); color: #000; border-color: var(--gold); font-weight: 700; }
+.duration-active-hint { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+/* ── Watchlist search (Fix 4+6) ── */
+.wl-tier-row { display: flex; gap: 4px; margin-bottom: 6px; }
+.wl-tier-btn { flex: 1; padding: 3px 4px; font-size: 10px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.wl-tier-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.wl-search-row { position: relative; margin-bottom: 6px; display: flex; gap: 4px; }
+.wl-search-input { flex: 1; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 11px; color: var(--text-primary); }
+.wl-search-clear { background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 0 4px; }
+.wl-empty { padding: 12px 8px; font-size: 11px; color: var(--text-muted); text-align: center; }
+
+
+
+
+
 /* ═══════════════════════════════════════════════════════════════════
    PHASE 6 — THE BATTLEFIELD v2  (append to dashboard.css)
    Namespace: bf2-*  (replaces all bf-* rules from v1)
