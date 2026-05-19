@@ -85,8 +85,25 @@ export default function GoldMarket({
   const hourlyPnL     = calcHourlyPnL(closedTrades.filter(t => t.market === "gold"));
   const goldPositions = positions.filter(p => p.market === "gold");
 
-  // In-memory closed trades for this market (session only, no D1 fetch)
-  const sessionClosed = closedTrades.filter(t => t.market === "gold");
+  // ── All Session: 12-hour D1 fetch (refresh-safe, sleep-safe) ────────────────
+  const [sessionClosed,    setSessionClosed]    = useState([]);
+  const [sessionLoading,   setSessionLoading]   = useState(false);
+  const [sessionLoaded,    setSessionLoaded]    = useState(false);   // fetched at least once this view
+
+  async function loadSessionClosed() {
+    if (sessionLoading) return;
+    setSessionLoading(true);
+    try {
+      const res  = await fetch(`${WORKER}/api/trades?market=gold&side=sell&hours=12&limit=100`);
+      const json = await res.json();
+      setSessionClosed(json.success ? json.data : []);
+      setSessionLoaded(true);
+    } catch {
+      setSessionClosed([]);
+    } finally {
+      setSessionLoading(false);
+    }
+  }
 
   const currentPrice = activeSymbol === "THAI_GOLD_BAHT"
     ? goldData?.thaiGold?.price
@@ -122,6 +139,7 @@ export default function GoldMarket({
     result.closedTrades.forEach(t => {
       logTradeToD1({ id: t.id, symbol: t.symbol, market: "gold", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price || currentPrice, pnl: t.pnl, strategy: t.strategy || activeStrategy, opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
+    setSessionLoaded(false);
   }, [handleSell, portfolio, currentPrice, activeStrategy]);
 
   function handleStrategyEvent(ev) {
@@ -153,6 +171,7 @@ export default function GoldMarket({
     });
     setSellQty("");
     setSellDeskOpen(false);
+    setSessionLoaded(false); // next All Session click will re-fetch
   }
 
   return (
@@ -263,7 +282,7 @@ export default function GoldMarket({
                   >Active</button>
                   <button
                     className={`pos-view-btn ${posView === "all" ? "active" : ""}`}
-                    onClick={() => setPosView("all")}
+                    onClick={() => { setPosView("all"); loadSessionClosed(); }}
                   >All Session</button>
                 </div>
                 <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
@@ -278,17 +297,20 @@ export default function GoldMarket({
                 {/* ── Unified scrollable positions zone ── */}
                 <div className="panel-bottom-zone positions-zone pz-unified">
                   {(() => {
-                    // Build unified row list: open positions + (if All Session) closed trades
+                    // Build unified row list
                     const openRows = goldPositions.map(pos => ({ ...pos, _rowType: "open" }));
                     const closedRows = posView === "all"
                       ? sessionClosed.map(t => ({ ...t, _rowType: "closed" }))
                       : [];
                     const allRows = [...openRows, ...closedRows];
 
+                    if (posView === "all" && sessionLoading) {
+                      return <div className="empty-state">⏳ Loading last 12 hours...</div>;
+                    }
                     if (allRows.length === 0) {
                       return (
                         <div className="empty-state">
-                          {posView === "active" ? "No open positions." : "No trades this session."}
+                          {posView === "active" ? "No open positions." : "No trades in the last 12 hours."}
                         </div>
                       );
                     }
@@ -322,18 +344,18 @@ export default function GoldMarket({
                               </div>
                             );
                           } else {
-                            // closed trade row
+                            // D1 closed row — uses snake_case fields
                             const pnlUp = (row.pnl ?? 0) >= 0;
                             return (
                               <div key={row.id || i} className="pos-row pos-row--10col pos-row--closed">
                                 <span className="pos-symbol">{row.symbol}</span>
                                 <span>{row.qty}</span>
-                                <span>฿{Math.round(row.entryPrice)?.toLocaleString()}</span>
-                                <span>{row.exitPrice ? `฿${Math.round(row.exitPrice)?.toLocaleString()}` : "—"}</span>
+                                <span>฿{Math.round(row.entry_price)?.toLocaleString()}</span>
+                                <span>{row.exit_price ? `฿${Math.round(row.exit_price)?.toLocaleString()}` : "—"}</span>
                                 <span className={pnlUp ? "pnl-up" : "pnl-down"}>
                                   {row.pnl != null ? `${pnlUp ? "+" : ""}฿${Math.round(row.pnl)?.toLocaleString()}` : "—"}
                                 </span>
-                                <span className={pnlUp ? "pnl-up" : "pnl-down"}>—</span>
+                                <span>—</span>
                                 <span>—</span>
                                 <span>—</span>
                                 <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
