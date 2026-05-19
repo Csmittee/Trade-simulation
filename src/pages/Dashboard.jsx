@@ -560,15 +560,18 @@ export default function Dashboard() {
         {activeTab === "gold" && <GoldMarket {...sharedMarketProps} />}
         {activeTab === "set"  && <SetMarket  {...sharedMarketProps} />}
         {activeTab === "portfolio" && (
-          <Portfolio
-            portfolio={portfolio}
-            workflow={workflow}
-            activeStrategy={activeStrategy}
-            autoExecute={autoExecute}
-            activityEvents={activityEvents}
-            onTabSwitch={setActiveTab}
-          />
-        )}
+  <Portfolio
+    portfolio={portfolio}
+    workflow={workflow}
+    activeStrategy={activeStrategy}
+    autoExecute={autoExecute}
+    activityEvents={activityEvents}
+    stageStatuses={stageStatuses}
+    activeStageIdx={activeStageIdx}
+    workflowDone={workflowDone}
+    onTabSwitch={setActiveTab}
+  />
+)}
       </main>
 
       {/* ── Reset Dialog ── */}
