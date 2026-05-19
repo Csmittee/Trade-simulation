@@ -264,16 +264,7 @@ a { color: var(--gold); }
 }
 
 /* Bottom panel — positions + activity log stacked, max 40vh, collapsible */
-.panel-bottom {
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  border-top: 2px solid var(--border);
-  max-height: 40vh;
-  overflow: hidden;
-  transition: max-height 0.25s ease;
-}
-.panel-bottom.collapsed { max-height: 36px; }
+/* panel-bottom layout moved to Phase 6 block below */
 
 /* Panel bottom header bar */
 .panel3-header {
@@ -1931,36 +1922,59 @@ a { color: var(--gold); }
   flex: 0 0 auto !important;
 }
 
-/* ── Phase 6: Bottom panel single-zone layout ── */
+/* ── Phase 6: Bottom panel layout ── */
+
+/* panel-bottom always opens to ~38vh regardless of content */
+.panel-bottom {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-top: 2px solid var(--border);
+  min-height: 38vh;           /* always visible when not collapsed */
+  max-height: 38vh;           /* cap to 38vh — scroll kicks in inside */
+  overflow: hidden;
+  transition: max-height 0.25s ease, min-height 0.25s ease;
+}
+.panel-bottom.collapsed {
+  min-height: 36px;
+  max-height: 36px;
+}
+
+/* panel-bottom-body: flex column, fill full height */
 .panel-bottom-body--single {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
-/* positions-zone grows to content, no fixed max in single mode */
-.panel-bottom-body--single .positions-zone {
-  flex: 1 1 auto;
-  max-height: none;
+
+/* Scrollable positions zone — takes all available space, scrolls when content overflows */
+.panel-bottom-body--single .positions-zone.pz-unified {
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px 16px 4px;
-  border-bottom: none;
+  overflow-x: hidden;
+  padding: 6px 16px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Sell desk — pinned outside the scroll zone, never moves */
+.sell-desk--pinned {
+  flex-shrink: 0;
 }
 
 /* ── Phase 6: Collapsible sell desk ── */
 .sell-desk--collapsible {
-  margin-top: 8px;
-  border: 1px solid rgba(239,68,68,0.25);
-  border-radius: var(--radius-md);
+  border-top: 1px solid rgba(239,68,68,0.2);
   overflow: hidden;
 }
-/* Summary line — single clickable row */
+/* Summary line — always visible, click to expand upward */
 .sell-desk-summary-line {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 12px;
+  padding: 7px 16px;
   background: rgba(239,68,68,0.06);
   border: none;
   cursor: pointer;
@@ -1983,11 +1997,11 @@ a { color: var(--gold); }
   color: var(--red);
   white-space: nowrap;
 }
-/* Expanded sell desk body */
+/* Expanded sell desk body — springs upward (rendered above summary via flex-column-reverse is not needed; body renders above because it's inside a column container and summary-line is last visually) */
 .sell-desk-body {
-  padding: 8px 12px 10px;
+  padding: 8px 16px 10px;
   background: rgba(239,68,68,0.04);
-  border-top: 1px solid rgba(239,68,68,0.15);
+  border-bottom: 1px solid rgba(239,68,68,0.15);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1996,10 +2010,58 @@ a { color: var(--gold); }
 /* ── Phase 6: Activity log placeholder line ── */
 .activity-log-placeholder {
   flex-shrink: 0;
-  padding: 6px 16px 8px;
+  padding: 5px 16px 6px;
   font-size: 11px;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
   letter-spacing: 0.1px;
+}
+
+/* ── Phase 6: 10-column unified positions table ── */
+.positions-table--10col { width: 100%; }
+.pos-row--10col {
+  display: grid;
+  grid-template-columns: 60px 55px 68px 68px 72px 52px 52px 52px 1fr 52px;
+  gap: 0;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 11px;
+}
+.pos-row--10col.header {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 0 5px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-base);
+  z-index: 1;
+}
+/* Dim closed rows slightly */
+.pos-row--closed { opacity: 0.75; }
+
+/* Status badge */
+.pos-status {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  text-align: center;
+  width: fit-content;
+}
+.pos-status--active {
+  background: rgba(34,197,94,0.15);
+  color: var(--green);
+  border: 1px solid rgba(34,197,94,0.3);
+}
+.pos-status--closed {
+  background: rgba(156,163,175,0.1);
+  color: var(--text-muted);
+  border: 1px solid rgba(156,163,175,0.2);
 }
