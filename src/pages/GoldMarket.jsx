@@ -275,146 +275,139 @@ export default function GoldMarket({
             {!panel3Collapsed && (
               <div className="panel-bottom-body panel-bottom-body--single">
 
-                {/* ── Positions zone ── */}
-                <div className="panel-bottom-zone positions-zone">
+                {/* ── Unified scrollable positions zone ── */}
+                <div className="panel-bottom-zone positions-zone pz-unified">
+                  {(() => {
+                    // Build unified row list: open positions + (if All Session) closed trades
+                    const openRows = goldPositions.map(pos => ({ ...pos, _rowType: "open" }));
+                    const closedRows = posView === "all"
+                      ? sessionClosed.map(t => ({ ...t, _rowType: "closed" }))
+                      : [];
+                    const allRows = [...openRows, ...closedRows];
 
-                  {/* ── OPEN positions ── */}
-                  {goldPositions.length === 0 ? (
-                    <div className="empty-state">No open positions.</div>
-                  ) : (
-                    <>
-                      <div className="positions-table">
-                        <div className="pos-row header">
-                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Current</span>
+                    if (allRows.length === 0) {
+                      return (
+                        <div className="empty-state">
+                          {posView === "active" ? "No open positions." : "No trades this session."}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="positions-table positions-table--10col">
+                        {/* 10-column header */}
+                        <div className="pos-row pos-row--10col header">
+                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Price</span>
                           <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                          <span>Strategy</span>
+                          <span>Strategy</span><span>Status</span>
                         </div>
-                        {goldPositions.map(pos => {
-                          const pnlUp = pos.unrealisedPnL >= 0;
-                          return (
-                            <div key={pos.id} className="pos-row">
-                              <span className="pos-symbol">{pos.symbol}</span>
-                              <span>{pos.qty}</span>
-                              <span>฿{pos.entryPrice?.toLocaleString()}</span>
-                              <span>฿{pos.currentPrice?.toLocaleString()}</span>
-                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                                {pnlUp ? "+" : ""}฿{pos.unrealisedPnL?.toLocaleString("en-US", { minimumFractionDigits: 0 })}
-                              </span>
-                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                                {pnlUp ? "+" : ""}{pos.unrealisedPnLPct?.toFixed(2)}%
-                              </span>
-                              <span className="pos-stop">{pos.stopLoss   ? `฿${pos.stopLoss}`   : "—"}</span>
-                              <span className="pos-tp">  {pos.takeProfit ? `฿${pos.takeProfit}` : "—"}</span>
-                              <span className="pos-strategy">{pos.strategy !== "manual" ? `🤖 ${pos.strategy}` : "—"}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* ── Sell Desk — collapsed by default ── */}
-                      {(() => {
-                        const totalHeld = goldPositions.reduce((s, p) => s + p.qty, 0);
-                        const totalCost = goldPositions.reduce((s, p) => s + p.totalCost, 0);
-                        const avgEntry  = totalHeld > 0 ? totalCost / totalHeld : 0;
-                        const price     = currentPrice || 0;
-                        const totalPnl  = goldPositions.reduce((s, p) => s + p.unrealisedPnL, 0);
-                        const sellN     = parseFloat(sellQty) || 0;
-                        const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
-                        const pnlUp     = (estPnl ?? 0) >= 0;
-                        const pnlColor  = totalPnl >= 0 ? "pnl-up" : "pnl-down";
-
-                        return (
-                          <div className="sell-desk sell-desk--collapsible">
-                            {/* Summary line — always visible, click to expand */}
-                            <button
-                              className="sell-desk-summary-line"
-                              onClick={() => setSellDeskOpen(v => !v)}
-                            >
-                              <span className="sdsl-symbol">THAI GOLD</span>
-                              <span className="sdsl-sep">—</span>
-                              <span className="sdsl-qty"><strong>{totalHeld}</strong> baht-wt</span>
-                              <span className="sdsl-sep">|</span>
-                              <span className="sdsl-avg">Avg ฿{Math.round(avgEntry)?.toLocaleString()}</span>
-                              <span className="sdsl-sep">|</span>
-                              <span className={`sdsl-pnl ${pnlColor}`}>
-                                P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}
-                              </span>
-                              <span className="sdsl-cta">{sellDeskOpen ? "▲ Close" : "▼ Sell"}</span>
-                            </button>
-
-                            {/* Expanded sell controls */}
-                            {sellDeskOpen && (
-                              <div className="sell-desk-body">
-                                <div className="sell-desk-controls">
-                                  <input
-                                    type="number"
-                                    className="sell-desk-input"
-                                    value={sellQty}
-                                    onChange={e => setSellQty(e.target.value)}
-                                    placeholder={`Qty (max ${totalHeld})`}
-                                    min={1} max={totalHeld} step={1}
-                                  />
-                                  <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
-                                  <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 2) || 1))}>Half</button>
-                                </div>
-                                {estPnl !== null && (
-                                  <div className={`sell-desk-preview ${pnlUp ? "pnl-up" : "pnl-down"}`}>
-                                    Sell {sellN} baht → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
-                                  </div>
-                                )}
-                                <button
-                                  className="sell-desk-btn"
-                                  onClick={handleSellDesk}
-                                  disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}
-                                >
-                                  ▼ SELL {sellQty || "?"} BAHT-WEIGHT @ MARKET
-                                </button>
+                        {allRows.map((row, i) => {
+                          if (row._rowType === "open") {
+                            const pnlUp = row.unrealisedPnL >= 0;
+                            return (
+                              <div key={row.id || i} className="pos-row pos-row--10col">
+                                <span className="pos-symbol">{row.symbol}</span>
+                                <span>{row.qty}</span>
+                                <span>฿{row.entryPrice?.toLocaleString()}</span>
+                                <span>฿{row.currentPrice?.toLocaleString()}</span>
+                                <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                  {pnlUp ? "+" : ""}฿{row.unrealisedPnL?.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                                </span>
+                                <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                  {pnlUp ? "+" : ""}{row.unrealisedPnLPct?.toFixed(2)}%
+                                </span>
+                                <span className="pos-stop">{row.stopLoss   ? `฿${row.stopLoss}`   : "—"}</span>
+                                <span className="pos-tp">  {row.takeProfit ? `฿${row.takeProfit}` : "—"}</span>
+                                <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
+                                <span className="pos-status pos-status--active">ACTIVE</span>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </>
-                  )}
-
-                  {/* ── All Session: in-memory closed trades ── */}
-                  {posView === "all" && sessionClosed.length > 0 && (
-                    <div style={{ marginTop: 12 }}>
-                      <div className="panel-bottom-section-title" style={{ marginBottom: 6 }}>
-                        Closed This Session ({sessionClosed.length})
-                      </div>
-                      <div className="positions-table">
-                        <div className="pos-row header">
-                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Exit</span>
-                          <span>P&L</span><span>Strategy</span><span>Closed</span>
-                        </div>
-                        {sessionClosed.map((t, i) => {
-                          const pnlUp = (t.pnl ?? 0) >= 0;
-                          return (
-                            <div key={t.id || i} className="pos-row">
-                              <span className="pos-symbol">{t.symbol}</span>
-                              <span>{t.qty}</span>
-                              <span>฿{Math.round(t.entryPrice)?.toLocaleString()}</span>
-                              <span>{t.exitPrice ? `฿${Math.round(t.exitPrice)?.toLocaleString()}` : "—"}</span>
-                              <span className={pnlUp ? "pnl-up" : "pnl-down"}>
-                                {t.pnl != null ? `${pnlUp ? "+" : ""}฿${Math.round(t.pnl)?.toLocaleString()}` : "—"}
-                              </span>
-                              <span className="pos-strategy">{t.strategy !== "manual" ? `🤖 ${t.strategy}` : "—"}</span>
-                              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
-                                {t.closedAt ? new Date(t.closedAt).toLocaleString("en-US", { hour: "2-digit", minute: "2-digit" }) : "—"}
-                              </span>
-                            </div>
-                          );
+                            );
+                          } else {
+                            // closed trade row
+                            const pnlUp = (row.pnl ?? 0) >= 0;
+                            return (
+                              <div key={row.id || i} className="pos-row pos-row--10col pos-row--closed">
+                                <span className="pos-symbol">{row.symbol}</span>
+                                <span>{row.qty}</span>
+                                <span>฿{Math.round(row.entryPrice)?.toLocaleString()}</span>
+                                <span>{row.exitPrice ? `฿${Math.round(row.exitPrice)?.toLocaleString()}` : "—"}</span>
+                                <span className={pnlUp ? "pnl-up" : "pnl-down"}>
+                                  {row.pnl != null ? `${pnlUp ? "+" : ""}฿${Math.round(row.pnl)?.toLocaleString()}` : "—"}
+                                </span>
+                                <span className={pnlUp ? "pnl-up" : "pnl-down"}>—</span>
+                                <span>—</span>
+                                <span>—</span>
+                                <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
+                                <span className="pos-status pos-status--closed">CLOSED</span>
+                              </div>
+                            );
+                          }
                         })}
                       </div>
-                    </div>
-                  )}
-
-                  {posView === "all" && sessionClosed.length === 0 && goldPositions.length === 0 && (
-                    <div className="empty-state">No trades this session.</div>
-                  )}
-
+                    );
+                  })()}
                 </div>
+
+                {/* ── Sell Desk — always pinned below scroll zone, never inside it ── */}
+                {(() => {
+                  const totalHeld = goldPositions.reduce((s, p) => s + p.qty, 0);
+                  const totalCost = goldPositions.reduce((s, p) => s + p.totalCost, 0);
+                  const avgEntry  = totalHeld > 0 ? totalCost / totalHeld : 0;
+                  const price     = currentPrice || 0;
+                  const totalPnl  = goldPositions.reduce((s, p) => s + p.unrealisedPnL, 0);
+                  const sellN     = parseFloat(sellQty) || 0;
+                  const estPnl    = sellN > 0 ? (price - avgEntry) * sellN : null;
+                  const pnlUp     = (estPnl ?? 0) >= 0;
+                  const pnlColor  = totalPnl >= 0 ? "pnl-up" : "pnl-down";
+                  return (
+                    <div className="sell-desk sell-desk--collapsible sell-desk--pinned">
+                      {/* Summary line — always visible, springs upward on expand */}
+                      <button
+                        className="sell-desk-summary-line"
+                        onClick={() => setSellDeskOpen(v => !v)}
+                      >
+                        <span className="sdsl-symbol">THAI GOLD</span>
+                        <span className="sdsl-sep">—</span>
+                        <span className="sdsl-qty"><strong>{totalHeld}</strong> baht-wt</span>
+                        <span className="sdsl-sep">|</span>
+                        <span className="sdsl-avg">Avg ฿{totalHeld > 0 ? Math.round(avgEntry)?.toLocaleString() : "—"}</span>
+                        <span className="sdsl-sep">|</span>
+                        <span className={`sdsl-pnl ${pnlColor}`}>
+                          P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}
+                        </span>
+                        <span className="sdsl-cta">{sellDeskOpen ? "▲ Close" : "▼ Sell"}</span>
+                      </button>
+                      {/* Expanded controls — grows upward via flex-direction:column-reverse on parent */}
+                      {sellDeskOpen && (
+                        <div className="sell-desk-body">
+                          <div className="sell-desk-controls">
+                            <input
+                              type="number"
+                              className="sell-desk-input"
+                              value={sellQty}
+                              onChange={e => setSellQty(e.target.value)}
+                              placeholder={`Qty (max ${totalHeld})`}
+                              min={1} max={totalHeld} step={1}
+                            />
+                            <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
+                            <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 2) || 1))}>Half</button>
+                          </div>
+                          {estPnl !== null && (
+                            <div className={`sell-desk-preview ${pnlUp ? "pnl-up" : "pnl-down"}`}>
+                              Sell {sellN} baht → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
+                            </div>
+                          )}
+                          <button
+                            className="sell-desk-btn"
+                            onClick={handleSellDesk}
+                            disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}
+                          >
+                            ▼ SELL {sellQty || "?"} BAHT-WEIGHT @ MARKET
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── Activity log placeholder ── */}
                 <div className="activity-log-placeholder">
