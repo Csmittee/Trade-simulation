@@ -326,7 +326,7 @@ export default function SetMarket({
   stagePnl, setStagePnl,
   aiWorkflowActive,
 }) {
-  const [activeSymbol,    setActiveSymbol]    = useState(WATCHLIST[0]);
+  const [activeSymbol,    setActiveSymbol]    = useState(SET_UNIVERSE[0].t);
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
   const [orderMode,       setOrderMode]       = useState("manual");
