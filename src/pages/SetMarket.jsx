@@ -1,27 +1,5 @@
 /**
  * SetMarket.jsx
- * Phase 5 patch:
- * - Full props destructure — all sharedMarketProps listed (L054 fix)
- * - autoExecute + onAutoExecuteChange added to StrategyPanel
- * - onLoadMoreLogs + logLoading + logHasMore added to ActivityLog
- * - Closed positions toggle — loads last 50 closed trades from D1
- */
-
-import { useState, useCallback } from "react";
-import ChartPanel    from "../components/ChartPanel.jsx";
-import OrderPanel    from "../components/OrderPanel.jsx";
-import StrategyPanel from "../components/StrategyPanel.jsx";
-import ActivityLog   from "../components/ActivityLog.jsx";
-import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
-import { useSetMarket } from "../injectors/set-injector.js";
-import { useFetchIntel } from "../injectors/intel-injector.js";
-import { calcPortfolioSummary, calcHourlyPnL, executeSellQty } from "../core/portfolio-engine.js";
-import { makeActivityEvent } from "../components/ActivityLog.jsx";
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
-import config from "../../config.js";
-
-/**
- * SetMarket.jsx
  * Phase 6 patch:
  * - strategyDuration / onStrategyDurationChange props wired (Fix 1 — L054)
  * - AI workflow state uses Dashboard props instead of OrderPanel local state (Fix 2)
