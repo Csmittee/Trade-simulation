@@ -322,6 +322,7 @@ export default function SetMarket({
   onLoadMoreLogs,
   logLoading,
   logHasMore,
+  orderMode, onOrderModeChange,
   workflow, setWorkflow,
   stageStatuses, setStageStatuses,
   activeStageIdx, setActiveStageIdx,
@@ -330,8 +331,6 @@ export default function SetMarket({
   fallbackTriggered, setFallbackTriggered,
   stagePnl, setStagePnl,
   aiWorkflowActive,
-  orderMode,           // Fix B — lifted to Dashboard
-  onOrderModeChange,   // Fix B — lifted to Dashboard
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState(SET_UNIVERSE[0].t);
   const [timeframe,       setTimeframe]       = useState("1D");
@@ -593,17 +592,21 @@ export default function SetMarket({
                       );
                     }
                     return (
-                      <div className="positions-table positions-table--10col">
-                        <div className="pos-row pos-row--10col header">
-                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Price</span>
-                          <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                          <span>Strategy</span><span>Status</span>
+                      <div className="positions-table positions-table--12col">
+                        {/* 12-column header: Time | Side | Symbol | Qty | Entry | Price | P&L | P&L% | Stop | Target | Strategy | Status */}
+                        <div className="pos-row pos-row--12col header">
+                          <span>Time</span><span>Side</span><span>Symbol</span><span>Qty</span>
+                          <span>Entry</span><span>Price</span><span>P&L</span><span>P&L%</span>
+                          <span>Stop</span><span>Target</span><span>Strategy</span><span>Status</span>
                         </div>
                         {allRows.map((row, i) => {
                           if (row._rowType === "open") {
                             const pnlUp = row.unrealisedPnL >= 0;
+                            const openTime = row.openedAt ? new Date(row.openedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
                             return (
-                              <div key={row.id || i} className="pos-row pos-row--10col">
+                              <div key={row.id || i} className="pos-row pos-row--12col">
+                                <span className="pos-time">{openTime}</span>
+                                <span className="pos-side pos-side--buy">▲ BUY</span>
                                 <span className="pos-symbol">{row.symbol?.replace(".BK","")}</span>
                                 <span>{row.qty?.toLocaleString()}</span>
                                 <span>฿{row.entryPrice?.toFixed(2)}</span>
@@ -619,8 +622,11 @@ export default function SetMarket({
                           } else {
                             // D1 closed row — snake_case fields
                             const pnlUp = (row.pnl ?? 0) >= 0;
+                            const closeTime = row.closed_at ? new Date(row.closed_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
                             return (
-                              <div key={row.id || i} className="pos-row pos-row--10col pos-row--closed">
+                              <div key={row.id || i} className="pos-row pos-row--12col pos-row--closed">
+                                <span className="pos-time">{closeTime}</span>
+                                <span className="pos-side pos-side--sell">▼ SELL</span>
                                 <span className="pos-symbol">{row.symbol?.replace(".BK","")}</span>
                                 <span>{row.qty?.toLocaleString()}</span>
                                 <span>฿{parseFloat(row.entry_price)?.toFixed(2)}</span>
