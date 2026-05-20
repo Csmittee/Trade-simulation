@@ -655,35 +655,29 @@ export default function Dashboard() {
       <main className="tab-content">
         {activeTab === "gold" && <GoldMarket {...goldMarketProps} />}
         {activeTab === "set"  && <SetMarket  {...setMarketProps} />}
-        {activeTab === "portfolio" && (() => {
-          // Show whichever market has an active (non-done) workflow
-          // If both active somehow, gold takes priority; if neither active, show last non-null
-          const activeWf       = goldWorkflowActive ? goldWorkflow
-                               : setWorkflowActive  ? setWorkflow
-                               : (goldWorkflow || setWorkflow);
-          const activeStatuses = goldWorkflowActive ? goldStageStatuses
-                               : setWorkflowActive  ? setStageStatuses
-                               : (goldWorkflow ? goldStageStatuses : setStageStatuses);
-          const activeIdx      = goldWorkflowActive ? goldActiveStageIdx
-                               : setWorkflowActive  ? setActiveStageIdx
-                               : (goldWorkflow ? goldActiveStageIdx : setActiveStageIdx);
-          const activeDone     = goldWorkflowActive ? goldWorkflowDone
-                               : setWorkflowActive  ? setWorkflowDone
-                               : (goldWorkflow ? goldWorkflowDone : setWorkflowDone);
-          return (
-            <Portfolio
-              portfolio={portfolio}
-              workflow={activeWf}
-              activeStrategy={activeStrategy}
-              autoExecute={autoExecute}
-              activityEvents={activityEvents}
-              stageStatuses={activeStatuses}
-              activeStageIdx={activeIdx}
-              workflowDone={activeDone}
-              onTabSwitch={setActiveTab}
-            />
-          );
-        })()}
+       {activeTab === "portfolio" && (
+          <Portfolio
+            portfolio={portfolio}
+            activeStrategy={activeStrategy}
+            strategyDuration={strategyDuration}
+            goldBundle={{
+              workflow:          goldWorkflow,
+              stageStatuses:     goldStageStatuses,
+              activeStageIdx:    goldActiveStageIdx,
+              workflowDone:      goldWorkflowDone,
+              fallbackTriggered: goldFallbackTriggered,
+            }}
+            setBundle={{
+              workflow:          setWorkflow,
+              stageStatuses:     setStageStatuses,
+              activeStageIdx:    setActiveStageIdx,
+              workflowDone:      setWorkflowDone,
+              fallbackTriggered: setFallbackTriggered,
+            }}
+            activityEvents={activityEvents}
+            onTabSwitch={setActiveTab}
+          />
+        )}
       </main>
 
       {/* ── Reset Dialog ── */}
