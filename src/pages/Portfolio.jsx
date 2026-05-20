@@ -1,13 +1,11 @@
 /**
- * Portfolio.jsx — The Battlefield v7
+ * Portfolio.jsx — The Battlefield v8
  * Phase 6
  *
- * Changes from v6:
- * - Own scale Gantt bar: renders S1/S2/S3/S4 milestone nodes at correct
- *   date positions along the bar. Each node is a small circle above the bar.
- * - Node colors: pending=gray, active=gold (pulsing), win=green, loss=red, skipped=muted
- * - Node tooltip on hover: stage label + action + timeWindow
- * - AI output: now shows readable text (fixed in injector)
+ * KI011 change:
+ * - setBundle prop replaced with setWorkflows dict
+ *   { "PTT.BK": { workflow, stageStatuses, ... }, "SCB.BK": {...}, ... }
+ * - computeUniqueLanes and fetchBattlefieldAdvisor both receive setWorkflows dict
  */
 
 import { useState, useCallback } from "react";
@@ -44,11 +42,11 @@ function planBg(s) {
 }
 
 function nodeColor(status, isActive) {
-  if (isActive)           return "#f59e0b"; // gold — currently active
+  if (isActive)           return "#f59e0b";
   if (status === "win")   return "#22c55e";
   if (status === "loss")  return "#ef4444";
   if (status === "skipped") return "#4b5563";
-  return "#6b7280"; // pending
+  return "#6b7280";
 }
 
 function sortCards(cards, key) {
@@ -58,7 +56,7 @@ function sortCards(cards, key) {
       case "most_invest": return (b.totalCost || b.stats?.totalInvested || 0) - (a.totalCost || a.stats?.totalInvested || 0);
       case "most_missed": return (a.stats?.winRate ?? 100) - (b.stats?.winRate ?? 100);
       case "at_risk":     return (a.unrealisedPnL || 0) - (b.unrealisedPnL || 0);
-      default:            return 0;
+      default: return 0;
     }
   });
 }
@@ -85,7 +83,6 @@ function StageNode({ node, barHeight = 24 }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Node circle — sits above the bar */}
       <div style={{
         width:        9,
         height:       9,
@@ -97,7 +94,6 @@ function StageNode({ node, barHeight = 24 }) {
         marginTop:    -5,
       }} />
 
-      {/* Label below the bar */}
       <div style={{
         fontSize:   9,
         color:      col,
@@ -112,33 +108,23 @@ function StageNode({ node, barHeight = 24 }) {
         S{node.id}
       </div>
 
-      {/* Tooltip on hover */}
       {hovered && (
         <div style={{
           position:   "absolute",
           bottom:     "calc(100% + 10px)",
           left:       "50%",
           transform:  "translateX(-50%)",
-          background: "var(--bg-raised)",
-          border:     `1px solid ${col}`,
+          background: "#1f2937",
+          border:     "1px solid rgba(255,255,255,0.12)",
           borderRadius: 6,
           padding:    "6px 10px",
           minWidth:   140,
-          zIndex:     10,
+          zIndex:     20,
           pointerEvents: "none",
         }}>
-          <div style={{ fontSize: 10, fontWeight: 600, color: col, marginBottom: 3 }}>
-            S{node.id} — {node.label}
-          </div>
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>
-            {node.action}
-          </div>
-          {node.timeWindow && (
-            <div style={{ fontSize: 9, color: "var(--text-muted)" }}>{node.timeWindow}</div>
-          )}
-          <div style={{ fontSize: 9, color: col, marginTop: 3, textTransform: "capitalize" }}>
-            {node.isActive ? "● active" : node.status}
-          </div>
+          <div style={{ fontWeight: 600, fontSize: 11, color: col, marginBottom: 2 }}>S{node.id}: {node.label}</div>
+          <div style={{ fontSize: 10, color: "#9ca3af" }}>{node.action} · {node.timeWindow || "—"}</div>
+          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>{node.status}</div>
         </div>
       )}
     </div>
@@ -198,18 +184,17 @@ function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate 
       <div className="bf2-card-footer">
         <span className="bf2-card-cost">฿{fmt(cost)} invested</span>
         {stats && <span className="bf2-card-hist" style={{ color: histPnl>=0?"#22c55e":"#ef4444" }}>hist {fmtPnl(histPnl)}</span>}
+        <button className="bf2-card-nav" onClick={e => { e.stopPropagation(); onNavigate?.(lane.market); }}>Go to tab →</button>
       </div>
-      <button className="bf2-card-nav" onClick={e => { e.stopPropagation(); onNavigate(lane.market); }}>
-        Go to {lane.market === "gold" ? "Gold" : "SET"} →
-      </button>
     </div>
   );
 }
 
 // ── Main Battlefield ──────────────────────────────────────────────────────────
+// KI011: setBundle replaced with setWorkflows dict
 export default function Portfolio({
   portfolio, activeStrategy, strategyDuration,
-  goldBundle, setBundle, activityEvents, onTabSwitch,
+  goldBundle, setWorkflows, activityEvents, onTabSwitch,
 }) {
   const summary   = calcPortfolioSummary(portfolio);
   const positions = portfolio?.positions || [];
@@ -228,7 +213,8 @@ export default function Portfolio({
   const [actPrompt,      setActPrompt]      = useState("");
   const [isDragOver,     setIsDragOver]     = useState(false);
 
-  const lanes = computeUniqueLanes(positions, activeStrategy, strategyDuration, goldBundle, setBundle);
+  // KI011: pass setWorkflows dict (not single setBundle)
+  const lanes = computeUniqueLanes(positions, activeStrategy, strategyDuration, goldBundle, setWorkflows);
 
   const buildCards = () => {
     const cards = lanes.map(lane => ({ ...lane, stats: assetStats[lane.symbol] || null }));
@@ -258,16 +244,17 @@ export default function Portfolio({
   const forceAddSelect = sym => setSelectedSyms(prev => new Set([...prev, sym]));
   const selectedCards  = cards.filter(c => selectedSyms.has(c.symbol));
 
+  // KI011: pass setWorkflows instead of setBundle
   const handleAiAdvisor = useCallback(async (extra = "") => {
     setAiLoading(true);
     try {
       const advice = await fetchBattlefieldAdvisor({
         portfolio, assetStats, goalProgress: goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 },
-        goldBundle, setBundle, lanes: selectedCards.length > 0 ? selectedCards : lanes,
+        goldBundle, setWorkflows, lanes: selectedCards.length > 0 ? selectedCards : lanes,
       });
       setAiAdvice(extra ? `[${extra}]\n\n${advice}` : advice);
     } finally { setAiLoading(false); }
-  }, [portfolio, assetStats, goalProgress, goldBundle, setBundle, lanes, selectedCards]);
+  }, [portfolio, assetStats, goalProgress, goldBundle, setWorkflows, lanes, selectedCards]);
 
   const handlePromptSend = () => { if (!actPrompt.trim()) return; handleAiAdvisor(actPrompt); setActPrompt(""); };
 
@@ -275,15 +262,13 @@ export default function Portfolio({
   const visibleLanes = lanesCollapsed ? [] : lanes.slice(0, 5);
   const hasMore      = lanes.length > 5;
 
-  // computeSharedOwnRuler mutates visibleLanes — sets ownScaleBarStart/End/NowPct
-  // and also repositions stageNodes[].pct within the shared span
   const ownRulerLabels = scaleMode === "own" ? computeSharedOwnRuler(visibleLanes) : null;
 
   const hasGold      = lanes.some(l => l.market === "gold");
   const sharedLabels = [hasGold?"09:00":"10:00","11:00","13:00","15:00","17:00"].map((label,i) => ({ pct: i*25, label }));
   const rulerLabels  = scaleMode === "own" ? (ownRulerLabels || sharedLabels) : sharedLabels;
 
-  const BAR_HEIGHT = 24; // px — must match CSS .bf2-lane-track height
+  const BAR_HEIGHT = 24;
 
   return (
     <div className="bf2-root">
@@ -328,7 +313,6 @@ export default function Portfolio({
 
         {!lanesCollapsed && (
           <>
-            {/* Ruler */}
             <div className="bf2-timeline-ruler">
               <div className="bf2-ruler-spacer" />
               <div className="bf2-ruler-track">
@@ -359,7 +343,6 @@ export default function Portfolio({
                       <div key={lane.symbol} className="bf2-lane" style={{ marginBottom: 18 }}>
                         <div className="bf2-lane-name">{lane.displayName}</div>
                         <div className="bf2-lane-track" style={{ position: "relative", overflow: "visible" }}>
-                          {/* Full plan bar */}
                           <div style={{
                             position: "absolute", left: `${barStartPct}%`, width: `${barWidthPct}%`,
                             top: 0, bottom: 0, background: bg,
@@ -374,12 +357,10 @@ export default function Portfolio({
                             </span>
                           </div>
 
-                          {/* Stage milestone nodes */}
                           {nodes.map(node => (
                             <StageNode key={node.id} node={node} barHeight={BAR_HEIGHT} />
                           ))}
 
-                          {/* Now-marker */}
                           <div className="bf2-lane-pulse" style={{
                             position: "absolute", left: `${nowPct}%`,
                             top: "50%", transform: "translateY(-50%) translateX(-50%)",
@@ -391,7 +372,6 @@ export default function Portfolio({
                       </div>
                     );
                   } else {
-                    // Shared clock
                     const fillPct = Math.max(3, Math.round(lane.timeProgress * 100));
                     return (
                       <div key={lane.symbol} className="bf2-lane">
