@@ -1,14 +1,13 @@
 /**
  * OrderPanel.jsx
  * Phase 4 — AI Assist fully wired.
- * - Manual tab: unchanged
- * - AI tab:
- *     Top half  = chat (thesis input → AI analysis)
- *     Bottom half = workflow node panel (no more talk, just execute)
+ * Phase 6b — workflow state lifted to Dashboard (no longer local)
  *
- * Props unchanged from before. onAIStrategy called with:
- *   { prompt, market, symbol, currentPrice, portfolio, recentCloses }
- * Parent (GoldMarket/SetMarket) must pass recentCloses as prop.
+ * KI011 (Phase 6c) — Per-symbol workflow independence
+ * - workflowSymbol prop added: symbol the workflow was built for
+ * - aiWorkflowActive is now already scoped by symbol (computed in SetMarket)
+ *   so no extra logic needed here — the prop arrives correctly
+ * - Banner updated to show which symbol owns the workflow
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -44,8 +43,9 @@ export default function OrderPanel({
   recentCloses = [],
   selectedSymbol = "",
   onLogActivity,
-  aiWorkflowActive = false,  // Fix 3 — manual tab lock
-  // Fix 2 — workflow state lifted to Dashboard (no longer local)
+  aiWorkflowActive = false,  // KI011: already scoped to selectedSymbol by SetMarket
+  workflowSymbol = null,     // KI011: which symbol this workflow belongs to
+  // Workflow state lifted to Dashboard (Fix 2 — Phase 6)
   workflow,          setWorkflow,
   stageStatuses,     setStageStatuses,
   activeStageIdx,    setActiveStageIdx,
@@ -63,15 +63,14 @@ export default function OrderPanel({
   const [riskLevel, setRiskLevel]   = useState("medium");
   const [error, setError]           = useState(null);
   const [warning, setWarning]       = useState(null);
-  const [manualCollapsed, setManualCollapsed] = useState(true); // always start collapsed
+  const [manualCollapsed, setManualCollapsed] = useState(true);
 
-  // AI tab state — local only (UI state, doesn't need cross-tab persistence)
+  // AI tab state
   const [aiPrompt, setAiPrompt]           = useState("");
   const [aiLoading, setAiLoading]         = useState(false);
   const [aiError, setAiError]             = useState(null);
   const [chatCollapsed, setChatCollapsed] = useState(false);
-  const [stageExecuted, setStageExecuted] = useState([]); // Fix C: track per-stage execution
-  // workflow, stageStatuses, etc. are now PROPS from Dashboard (Fix 2 — Phase 6)
+  const [stageExecuted, setStageExecuted] = useState([]);
   const workflowRef = useRef(null);
 
   useEffect(() => {
@@ -107,7 +106,6 @@ export default function OrderPanel({
     const sl = parseFloat(stopLoss) || null;
     const suggested = suggestPositionSize(portfolio.balance, p, sl, riskLevel, market);
     setQty(suggested.toString());
-    // Also auto-fill SL/TP from risk defaults
     const defaults = getRiskDefaults(p, riskLevel);
     if (!stopLoss)   setStopLoss(String(defaults.stopLoss));
     if (!takeProfit) setTakeProfit(String(defaults.takeProfit));
@@ -117,11 +115,9 @@ export default function OrderPanel({
     setRiskLevel(level);
     const p = parseFloat(price) || currentPrice;
     if (!p) return;
-    // Auto-fill SL/TP for the selected risk level
     const defaults = getRiskDefaults(p, level);
     setStopLoss(String(defaults.stopLoss));
     setTakeProfit(String(defaults.takeProfit));
-    // Recalculate qty if already set
     if (qty) {
       const sl = defaults.stopLoss;
       const suggested = suggestPositionSize(portfolio.balance, p, sl, level, market);
@@ -149,7 +145,7 @@ export default function OrderPanel({
     setError(null); setWarning(null);
     if (!qty || !price) { setError("Please enter quantity and price."); return; }
     if (!canTrade) { setError(closedHint); return; }
-   if (side === "buy") {
+    if (side === "buy") {
       const sym = market === "gold" ? "THAI_GOLD_BAHT" : (selectedSymbol || "SELECTED_STOCK");
       const p   = parseFloat(price);
       const q   = parseFloat(qty);
@@ -192,6 +188,8 @@ export default function OrderPanel({
       if (!json.success) throw new Error(json.error || "Worker returned error");
 
       const wf = json.data;
+      // KI011: embed the symbol into the workflow object so we can identify it later
+      wf.symbol = selectedSymbol || (market === "gold" ? "THAI_GOLD_BAHT" : "");
       setWorkflow(wf);
       setStageStatuses(wf.stages.map((_, i) => (i === 0 ? STATUS.ACTIVE : STATUS.PENDING)));
       setStagePnl(wf.stages.map(() => null));
@@ -213,8 +211,7 @@ export default function OrderPanel({
     setChatCollapsed(false);
   }
 
-  // Mark current stage as win or loss, advance to next
-  function resolveStage(stageIdx, outcome /* "win" | "loss" | "skip" */) {
+  function resolveStage(stageIdx, outcome) {
     const newStatuses = [...stageStatuses];
     const newPnl      = [...stagePnl];
 
@@ -223,11 +220,9 @@ export default function OrderPanel({
     if (outcome === "skip") { newStatuses[stageIdx] = STATUS.SKIPPED; }
     setStageStatuses(newStatuses);
 
-    // Track consecutive red
     let newConsecRed = outcome === "loss" ? consecutiveRed + 1 : 0;
     setConsecutiveRed(newConsecRed);
 
-    // Fallback rule check — 2 consecutive losses
     if (newConsecRed >= 2) {
       setFallbackTriggered(true);
       setWorkflowDone(true);
@@ -235,7 +230,6 @@ export default function OrderPanel({
       return;
     }
 
-    // Advance to next stage
     const nextIdx = stageIdx + 1;
     if (nextIdx >= newStatuses.length) {
       setWorkflowDone(true);
@@ -247,7 +241,6 @@ export default function OrderPanel({
     }
   }
 
-  // Execute the trade for a stage then let user mark outcome
   function executeStageAction(stage, stageIdx) {
     if (!canTrade) { setAiError(closedHint); return; }
 
@@ -270,8 +263,6 @@ export default function OrderPanel({
         simMode,
       });
       if (result?.error) {
-        // Show error prominently — then still mark executed so outcome buttons
-        // appear and user can record Win/Loss/Skip manually (e.g. insufficient balance)
         setAiError(`⚠ ${result.error} — mark outcome manually below`);
         markExecuted();
         return;
@@ -281,13 +272,11 @@ export default function OrderPanel({
       markExecuted();
 
     } else if (stage.action === "SELL" || stage.action === "EXIT") {
-      // L325: always use executeSellQty for user-facing sells — never executeSell(null)
       const closePrice = workflow.suggestedTP || currentPrice;
       const openLots   = (portfolio.positions || []).filter(p => p.market === market && p.symbol === sym);
       const totalQty   = openLots.reduce((s, p) => s + p.qty, 0);
 
       if (totalQty === 0) {
-        // No open positions — log it, still let user mark outcome
         setAiError("⚠ No open positions to close — mark outcome manually below");
         markExecuted();
         return;
@@ -304,7 +293,6 @@ export default function OrderPanel({
       markExecuted();
 
     } else {
-      // HOLD — no trade needed
       setAiError(null);
       onLogActivity?.({ type: "info", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: HOLD — no trade placed` });
       markExecuted();
@@ -312,6 +300,11 @@ export default function OrderPanel({
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+  // KI011: workflowSymbol label for the locked-tab indicator
+  const wfSymLabel = workflowSymbol
+    ? workflowSymbol.replace("THAI_GOLD_BAHT", "Gold").replace(".BK", "")
+    : null;
+
   return (
     <div className="order-panel">
 
@@ -320,9 +313,12 @@ export default function OrderPanel({
         <button
           className={`mode-btn ${mode === "manual" ? "active" : ""} ${aiWorkflowActive ? "disabled-tab" : ""}`}
           onClick={() => { if (!aiWorkflowActive) onOrderModeChange("manual"); }}
-          title={aiWorkflowActive ? "AI Workflow active — manual trading locked" : ""}
+          title={aiWorkflowActive
+            ? `AI Workflow active for ${wfSymLabel || "this symbol"} — manual trading locked`
+            : ""}
         >
-          {aiWorkflowActive ? "🔒 Manual" : "Manual"}
+          {/* KI011: show which symbol owns the lock */}
+          {aiWorkflowActive ? `🔒 Manual${wfSymLabel ? ` (${wfSymLabel} AI)` : ""}` : "Manual"}
         </button>
         <button className={`mode-btn ${mode === "ai" ? "active" : ""}`} onClick={() => onOrderModeChange("ai")}>
           ✦ AI Assist
@@ -341,7 +337,7 @@ export default function OrderPanel({
       {mode === "ai" && (
         <div className="ai-panel">
 
-          {/* ── CHAT SECTION (collapsible after workflow built) ── */}
+          {/* ── CHAT SECTION ── */}
           <div className="ai-chat-section">
             <div
               className="ai-chat-header"
@@ -397,11 +393,10 @@ export default function OrderPanel({
             )}
           </div>
 
-          {/* ── WORKFLOW NODE PANEL (appears after AI responds) ── */}
+          {/* ── WORKFLOW NODE PANEL ── */}
           {workflow && (
             <div className="ai-workflow-panel" ref={workflowRef}>
 
-              {/* ── Workflow header ── */}
               <div className="wf-header">
                 <div className="wf-name">{workflow.workflowName}</div>
                 <div className={`wf-sentiment ${workflow.sentiment}`}>
@@ -417,10 +412,19 @@ export default function OrderPanel({
                 </button>
               </div>
 
-              {/* ── AI reasoning (compact) ── */}
+              {/* KI011: show which symbol this workflow was built for */}
+              {workflow.symbol && market !== "gold" && (
+                <div className="wf-symbol-tag" style={{
+                  fontSize: 10, color: "var(--text-muted)", marginBottom: 4,
+                  padding: "2px 6px", background: "rgba(255,255,255,0.04)",
+                  borderRadius: 4, display: "inline-block",
+                }}>
+                  Built for: {workflow.symbol.replace(".BK", "")}
+                </div>
+              )}
+
               <div className="wf-reasoning">{workflow.reasoning}</div>
 
-              {/* ── Key prices ── */}
               <div className="wf-prices">
                 {workflow.suggestedEntry && (
                   <span className="wf-price-tag entry">Entry ฿{workflow.suggestedEntry?.toLocaleString()}</span>
@@ -433,26 +437,22 @@ export default function OrderPanel({
                 )}
               </div>
 
-              {/* ── Fallback rule ── */}
               <div className="wf-fallback">
                 ⚠ Fallback: {workflow.fallbackRule}
               </div>
 
-              {/* ── Fallback triggered banner ── */}
               {fallbackTriggered && (
                 <div className="wf-fallback-triggered">
                   ⛔ FALLBACK TRIGGERED — 2 consecutive losses. Workflow halted. Holding position.
                 </div>
               )}
 
-              {/* ── Workflow done banner ── */}
               {workflowDone && !fallbackTriggered && (
                 <div className="wf-done-banner">
                   ✅ Workflow complete — all stages done.
                 </div>
               )}
 
-              {/* ── Stage nodes ── */}
               <div className="wf-stages">
                 {workflow.stages.map((stage, idx) => {
                   const status   = stageStatuses[idx] || STATUS.PENDING;
@@ -464,7 +464,6 @@ export default function OrderPanel({
                       key={stage.id}
                       className={`wf-stage ${status} ${isActive ? "wf-stage-active" : ""}`}
                     >
-                      {/* Stage connector line */}
                       {idx > 0 && (
                         <div className="wf-connector">
                           <div className="wf-connector-line" style={{
@@ -476,7 +475,6 @@ export default function OrderPanel({
                       )}
 
                       <div className="wf-stage-card">
-                        {/* Stage number + status icon */}
                         <div className="wf-stage-left">
                           <div
                             className="wf-stage-dot"
@@ -491,7 +489,6 @@ export default function OrderPanel({
                           <div className="wf-stage-num">S{stage.id}</div>
                         </div>
 
-                        {/* Stage content */}
                         <div className="wf-stage-content">
                           <div className="wf-stage-top">
                             <span className="wf-stage-label">{stage.label}</span>
@@ -511,17 +508,14 @@ export default function OrderPanel({
                             <div className="wf-stage-note">{stage.note}</div>
                           )}
 
-                          {/* Actual P&L if done */}
                           {stagePnl[idx] !== null && isDone && (
                             <div className={`wf-stage-actual-pnl ${stagePnl[idx] >= 0 ? "positive" : "negative"}`}>
                               Actual: {stagePnl[idx] >= 0 ? "+" : ""}฿{stagePnl[idx]}
                             </div>
                           )}
 
-                          {/* Action buttons — only for active stage */}
                           {isActive && !workflowDone && (
                             <div className="wf-stage-actions">
-                              {/* Execute button — hidden after execution */}
                               {stage.action !== "HOLD" && !stageExecuted[idx] && (
                                 <button
                                   className="wf-exec-btn"
@@ -535,31 +529,17 @@ export default function OrderPanel({
                                 <div className="wf-hold-note">◈ HOLD — no trade needed this stage</div>
                               )}
 
-                              {/* Outcome buttons — appear after execute (or immediately for HOLD) */}
                               {(stageExecuted[idx] || stage.action === "HOLD") && (
                                 <>
-                                  {/* Error shown here — visible even after execute button disappears */}
                                   {aiError && (
                                     <div className="wf-exec-error">{aiError}</div>
                                   )}
                                   <div className="wf-outcome-row">
-                                  <span className="wf-outcome-label">Mark result:</span>
-                                  <button
-                                    className="wf-outcome-btn win"
-                                    onClick={() => resolveStage(idx, "win")}
-                                    title="Stage hit target — move to next"
-                                  >✓ Win</button>
-                                  <button
-                                    className="wf-outcome-btn loss"
-                                    onClick={() => resolveStage(idx, "loss")}
-                                    title="Stage hit stop — move to next"
-                                  >✗ Loss</button>
-                                  <button
-                                    className="wf-outcome-btn skip"
-                                    onClick={() => resolveStage(idx, "skip")}
-                                    title="Skip this stage"
-                                  >— Skip</button>
-                                </div>
+                                    <span className="wf-outcome-label">Mark result:</span>
+                                    <button className="wf-outcome-btn win" onClick={() => resolveStage(idx, "win")} title="Stage hit target">✓ Win</button>
+                                    <button className="wf-outcome-btn loss" onClick={() => resolveStage(idx, "loss")} title="Stage hit stop">✗ Loss</button>
+                                    <button className="wf-outcome-btn skip" onClick={() => resolveStage(idx, "skip")} title="Skip this stage">— Skip</button>
+                                  </div>
                                 </>
                               )}
                             </div>
@@ -571,7 +551,6 @@ export default function OrderPanel({
                 })}
               </div>
 
-              {/* ── Apply entry to manual tab ── */}
               {!workflowDone && (
                 <button
                   className="ai-apply-btn"
@@ -586,7 +565,6 @@ export default function OrderPanel({
                 </button>
               )}
 
-              {/* ── Reset after done ── */}
               {workflowDone && (
                 <button className="ai-reset-btn" onClick={resetWorkflow}>
                   ↩ Build New Strategy
@@ -603,7 +581,6 @@ export default function OrderPanel({
       ══════════════════════════════════════════════════════════════════════ */}
       {mode === "manual" && (
         <>
-          {/* ── Collapsible header ── */}
           <div className="manual-collapse-header" onClick={() => setManualCollapsed(v => !v)}>
             <span className="manual-collapse-title">▲ Manual Order</span>
             <span className="manual-collapse-hint">{manualCollapsed ? "▶ expand" : "▼ hide"}</span>
