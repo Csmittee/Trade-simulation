@@ -1,12 +1,13 @@
 /**
- * Portfolio.jsx — The Battlefield v3
+ * Portfolio.jsx — The Battlefield v4
  * Phase 6
  *
- * Changes from v2:
- * - Zone 1 timeline header: labels now show session time (09:00→17:00 Gold, 10:00→17:00 SET)
- *   instead of relative hours. Both markets share the same right edge (17:00 ICT).
- * - dragStart: force-ADD the symbol to selectedSyms instead of toggling.
- *   Previously toggled off if already selected, causing card to disappear from drop zone.
+ * Changes from v3:
+ * - Accepts goldBundle + setBundle as props (instead of single workflow)
+ * - computeUniqueLanes called with new signature (no single workflow arg)
+ * - fetchBattlefieldAdvisor updated to receive goldBundle + setBundle
+ * - Protocol detail in swim lane now shows AI stage label + time window
+ * - strategyDuration passed through to injector
  */
 
 import { useState, useCallback } from "react";
@@ -20,7 +21,6 @@ import {
 } from "../injectors/portfolio-injector.js";
 import { calcPortfolioSummary } from "../core/portfolio-engine.js";
 
-// ── Sort options ──────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
   { key: "best_earn",   label: "Best earn" },
   { key: "most_invest", label: "Most invested" },
@@ -97,6 +97,7 @@ function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate 
   const rr      = stats?.returnRatio ?? null;
   const cost    = Math.round(lane.totalCost || 0);
   const isRisk  = lane.planStatus === "at_risk";
+  const expired = lane.strategyExpired;
 
   return (
     <div
@@ -105,7 +106,7 @@ function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate 
       draggable
       onDragStart={e => {
         e.dataTransfer.setData("bf-symbol", lane.symbol);
-        onDragStart(lane.symbol); // force-add, never toggle
+        onDragStart(lane.symbol);
       }}
     >
       <div className="bf2-card-top">
@@ -120,8 +121,10 @@ function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate 
       </div>
 
       {lane.protocol && (
-        <div className="bf2-card-proto">
-          {lane.protocol}{lane.protocolDetail && ` · ${lane.protocolDetail}`}
+        <div className="bf2-card-proto" style={{ color: expired ? "#f59e0b" : undefined }}>
+          {expired ? "⏱ " : ""}{lane.protocol}
+          {lane.protocolDetail && ` · ${lane.protocolDetail}`}
+          {expired && " — expired"}
         </div>
       )}
 
@@ -175,8 +178,13 @@ function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate 
 
 // ── Main Battlefield ──────────────────────────────────────────────────────────
 export default function Portfolio({
-  portfolio, workflow, activeStrategy, autoExecute,
-  stageStatuses, activeStageIdx, workflowDone, activityEvents, onTabSwitch,
+  portfolio,
+  activeStrategy,
+  strategyDuration,
+  goldBundle,   // { workflow, stageStatuses, activeStageIdx, workflowDone, fallbackTriggered }
+  setBundle,    // same shape
+  activityEvents,
+  onTabSwitch,
 }) {
   const summary   = calcPortfolioSummary(portfolio);
   const positions = portfolio?.positions || [];
@@ -200,10 +208,13 @@ export default function Portfolio({
   const [actPrompt,  setActPrompt]  = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // Lanes from KV (no D1 needed)
+  // Lanes — now uses both bundles + strategyDuration
   const lanes = computeUniqueLanes(
-    positions, activeStrategy, workflow,
-    stageStatuses || [], activeStageIdx || 0
+    positions,
+    activeStrategy,
+    strategyDuration,
+    goldBundle,
+    setBundle,
   );
 
   // Cards
@@ -215,7 +226,7 @@ export default function Portfolio({
           symbol: s.symbol, displayName: s.symbol.replace(".BK", ""),
           market: s.market, planStatus: "no_plan",
           unrealisedPnL: 0, totalCost: 0, positionCount: 0,
-          protocol: null, timeProgress: 0, stats: s,
+          protocol: null, timeProgress: 0, strategyExpired: false, stats: s,
         });
       }
     });
@@ -236,31 +247,24 @@ export default function Portfolio({
     finally  { setD1Loading(false); }
   }, []);
 
-  // Card selection: toggle on click, force-add on drag
-  const toggleSelect = sym => setSelectedSyms(prev => {
-    const next = new Set(prev);
-    next.has(sym) ? next.delete(sym) : next.add(sym);
-    return next;
-  });
-
-  // FIXED: drag always adds (never removes)
-  const forceAddSelect = sym => setSelectedSyms(prev => new Set([...prev, sym]));
-
-  const selectedCards = cards.filter(c => selectedSyms.has(c.symbol));
+  // Card selection
+  const toggleSelect    = sym => setSelectedSyms(prev => { const n = new Set(prev); n.has(sym) ? n.delete(sym) : n.add(sym); return n; });
+  const forceAddSelect  = sym => setSelectedSyms(prev => new Set([...prev, sym]));
+  const selectedCards   = cards.filter(c => selectedSyms.has(c.symbol));
 
   // AI advisor
   const handleAiAdvisor = useCallback(async (extraPrompt = "") => {
     setAiLoading(true);
     try {
-      const contextLanes = selectedCards.length > 0 ? selectedCards : lanes;
       const advice = await fetchBattlefieldAdvisor({
         portfolio, assetStats,
-        goalProgress: goalProgress || { todayPnl: 0, goal: 500, pct: 0 },
-        workflow, lanes: contextLanes,
+        goalProgress: goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 },
+        goldBundle, setBundle,
+        lanes: selectedCards.length > 0 ? selectedCards : lanes,
       });
       setAiAdvice(extraPrompt ? `[${extraPrompt}]\n\n${advice}` : advice);
     } finally { setAiLoading(false); }
-  }, [portfolio, assetStats, goalProgress, workflow, lanes, selectedCards]);
+  }, [portfolio, assetStats, goalProgress, goldBundle, setBundle, lanes, selectedCards]);
 
   const handlePromptSend = () => {
     if (!actPrompt.trim()) return;
@@ -268,9 +272,8 @@ export default function Portfolio({
     setActPrompt("");
   };
 
-  // Session time labels for shared clock header
-  // Gold: 09:00–17:00, SET: 10:00–17:00 — we show shared labels based on earliest start
-  const hasGold  = lanes.some(l => l.market === "gold");
+  // Session time labels
+  const hasGold      = lanes.some(l => l.market === "gold");
   const sessionStart = hasGold ? "09:00" : "10:00";
   const timeLabels   = [sessionStart, "11:00", "13:00", "15:00", "17:00"];
 
@@ -293,9 +296,7 @@ export default function Portfolio({
               <span className="bf2-goal-val" style={{
                 color: goalProgress.status === "achieved" ? "#22c55e"
                      : goalProgress.todayPnl > 0 ? "#f59e0b" : "#ef4444"
-              }}>
-                ฿{fmt(goalProgress.todayPnl)} / ฿{goalProgress.goal}
-              </span>
+              }}>฿{fmt(goalProgress.todayPnl)} / ฿{goalProgress.goal}</span>
               <div className="bf2-goal-track">
                 <div className="bf2-goal-fill" style={{ width: `${goalProgress.pct}%` }} />
               </div>
@@ -311,23 +312,15 @@ export default function Portfolio({
 
       {d1Error && <div className="bf2-error">{d1Error}</div>}
 
-      {/* ══════════════════════
-          ZONE 1 — PLAN LANES
-      ══════════════════════ */}
+      {/* ══ ZONE 1 — PLAN ══ */}
       <section className="bf2-zone">
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">⟶</span>
           <span className="bf2-zone-label">Zone 1 — Plan</span>
-          <span className="bf2-zone-sub">Session clock · one lane per asset · right edge = 17:00 ICT</span>
+          <span className="bf2-zone-sub">Session clock · one lane per asset · 17:00 ICT = right edge</span>
           <div className="bf2-lane-controls">
-            <button
-              className={`bf2-scale-btn ${scaleMode === "shared" ? "active" : ""}`}
-              onClick={() => setScaleMode("shared")}
-            >shared clock</button>
-            <button
-              className={`bf2-scale-btn ${scaleMode === "own" ? "active" : ""}`}
-              onClick={() => setScaleMode("own")}
-            >own scale</button>
+            <button className={`bf2-scale-btn ${scaleMode === "shared" ? "active" : ""}`} onClick={() => setScaleMode("shared")}>shared clock</button>
+            <button className={`bf2-scale-btn ${scaleMode === "own" ? "active" : ""}`} onClick={() => setScaleMode("own")}>own scale</button>
             <button className="bf2-collapse-btn" onClick={() => setLanesCollapsed(v => !v)}>
               {lanesCollapsed ? "▼ show" : "▲ hide"}
             </button>
@@ -338,14 +331,11 @@ export default function Portfolio({
           <>
             {/* Session time ruler */}
             <div className="bf2-timeline-ruler">
-              <div className="bf2-ruler-spacer" /> {/* matches lane-name width */}
+              <div className="bf2-ruler-spacer" />
               <div className="bf2-ruler-track">
                 {timeLabels.map((label, i) => (
-                  <span
-                    key={label}
-                    className="bf2-ruler-tick"
-                    style={{ left: `${(i / (timeLabels.length - 1)) * 100}%` }}
-                  >
+                  <span key={label} className="bf2-ruler-tick"
+                    style={{ left: `${(i / (timeLabels.length - 1)) * 100}%` }}>
                     {label}
                   </span>
                 ))}
@@ -353,14 +343,11 @@ export default function Portfolio({
             </div>
 
             {lanes.length === 0 ? (
-              <div className="bf2-empty-lane">No open positions — open a position to see swim lanes</div>
+              <div className="bf2-empty-lane">No open positions</div>
             ) : (
               <div className="bf2-lanes">
                 {visibleLanes.map(lane => {
-                  // Shared clock: all lanes use same session progress (17:00 ICT right edge)
-                  // Own scale: same value here since injector always returns session progress
-                  const progress = lane.timeProgress;
-                  const fillPct  = Math.max(3, Math.round(progress * 100));
+                  const fillPct  = Math.max(3, Math.round(lane.timeProgress * 100));
                   const col      = planColor(lane.planStatus);
                   const bg       = planBg(lane.planStatus);
                   const pnl      = Math.round(lane.unrealisedPnL);
@@ -369,44 +356,26 @@ export default function Portfolio({
                     <div key={lane.symbol} className="bf2-lane">
                       <div className="bf2-lane-name">{lane.displayName}</div>
                       <div className="bf2-lane-track">
-                        <div
-                          className="bf2-lane-fill"
-                          style={{
-                            width: `${fillPct}%`,
-                            background: bg,
-                            borderRight: `2px solid ${col}`,
-                          }}
-                        >
+                        <div className="bf2-lane-fill"
+                          style={{ width: `${fillPct}%`, background: bg, borderRight: `2px solid ${col}` }}>
                           <span className="bf2-lane-proto">
                             {lane.protocol || "manual"}
                             {lane.protocolDetail && ` · ${lane.protocolDetail}`}
+                            {lane.strategyExpired && " ⏱"}
                           </span>
                         </div>
-                        <div
-                          className="bf2-lane-pulse"
-                          style={{ left: `${fillPct}%`, background: col }}
-                        />
+                        <div className="bf2-lane-pulse" style={{ left: `${fillPct}%`, background: col }} />
                       </div>
-                      <span
-                        className="bf2-lane-badge"
-                        style={{ background: bg, color: col }}
-                      >
+                      <span className="bf2-lane-badge" style={{ background: bg, color: col }}>
                         {planLabel(lane.planStatus)}
                       </span>
-                      <span
-                        className="bf2-lane-pnl"
-                        style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}
-                      >
+                      <span className="bf2-lane-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>
                         {fmtPnl(pnl)}
                       </span>
                     </div>
                   );
                 })}
-                {hasMore && (
-                  <div className="bf2-lanes-more">
-                    +{lanes.length - 5} more assets — see cards below
-                  </div>
-                )}
+                {hasMore && <div className="bf2-lanes-more">+{lanes.length - 5} more — see cards ↓</div>}
               </div>
             )}
 
@@ -414,6 +383,7 @@ export default function Portfolio({
               <span className="bf2-leg-dot" style={{ background: "#22c55e" }} /> on plan
               <span className="bf2-leg-dot" style={{ background: "#f59e0b" }} /> alert
               <span className="bf2-leg-dot" style={{ background: "#ef4444" }} /> risk
+              <span className="bf2-leg-dot" style={{ background: "#4b5563" }} /> ⏱ expired
               <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: "10px" }}>
                 bar = session progress · 17:00 ICT = right edge
               </span>
@@ -422,44 +392,30 @@ export default function Portfolio({
         )}
       </section>
 
-      {/* ══════════════════════════════
-          ZONE 2 — CARDS (horizontal)
-      ══════════════════════════════ */}
+      {/* ══ ZONE 2 — CARDS ══ */}
       <section className="bf2-zone bf2-cards-zone">
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">◉</span>
           <span className="bf2-zone-label">Zone 2 — Do + Check</span>
           <span className="bf2-zone-sub">
-            {selectedSyms.size > 0
-              ? `${selectedSyms.size} selected — drag or click Act ↓`
-              : "Click to select · drag to Act zone"}
+            {selectedSyms.size > 0 ? `${selectedSyms.size} selected — drag or click Act ↓` : "Click to select · drag to Act zone"}
           </span>
           <div className="bf2-sort-row">
             <span className="bf2-sort-label">Sort:</span>
             {SORT_OPTIONS.map(o => (
-              <button
-                key={o.key}
-                className={`bf2-sort-btn ${sortKey === o.key ? "active" : ""}`}
-                onClick={() => setSortKey(o.key)}
-              >{o.label}</button>
+              <button key={o.key} className={`bf2-sort-btn ${sortKey === o.key ? "active" : ""}`}
+                onClick={() => setSortKey(o.key)}>{o.label}</button>
             ))}
           </div>
           {!d1Loaded && (
-            <button
-              className="bf2-load-btn"
-              onClick={handleLoadD1}
-              disabled={d1Loading}
-              style={{ marginLeft: 6 }}
-            >
+            <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading} style={{ marginLeft: 6 }}>
               {d1Loading ? "…" : "Load D1 stats"}
             </button>
           )}
         </div>
 
         {cards.length === 0 ? (
-          <div className="bf2-empty-cards">
-            No positions or history — open a position or load D1 stats
-          </div>
+          <div className="bf2-empty-cards">No positions or history — open a position or load D1 stats</div>
         ) : (
           <div className="bf2-cards-scroll">
             {cards.map(card => (
@@ -469,7 +425,7 @@ export default function Portfolio({
                 stats={card.stats}
                 isSelected={selectedSyms.has(card.symbol)}
                 onSelect={toggleSelect}
-                onDragStart={forceAddSelect}   // ← FIXED: always add on drag
+                onDragStart={forceAddSelect}
                 onNavigate={mkt => onTabSwitch?.(mkt === "gold" ? "gold" : "set")}
               />
             ))}
@@ -477,37 +433,25 @@ export default function Portfolio({
         )}
       </section>
 
-      {/* ══════════════════════════════
-          ZONE 3 — ACT
-      ══════════════════════════════ */}
+      {/* ══ ZONE 3 — ACT ══ */}
       <section
         className="bf2-zone bf2-act-zone"
         onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
         onDragLeave={() => setIsDragOver(false)}
-        onDrop={e => {
-          e.preventDefault();
-          setIsDragOver(false);
-          const sym = e.dataTransfer.getData("bf-symbol");
-          if (sym) forceAddSelect(sym); // ← FIXED: force-add on drop too
-        }}
+        onDrop={e => { e.preventDefault(); setIsDragOver(false); const sym = e.dataTransfer.getData("bf-symbol"); if (sym) forceAddSelect(sym); }}
       >
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">⚡</span>
           <span className="bf2-zone-label">Zone 3 — Act</span>
-          <span className="bf2-zone-sub">Drop cards · multi-select OK · prompt AI</span>
-          <button
-            className="bf2-ai-btn"
-            onClick={() => handleAiAdvisor()}
-            disabled={aiLoading}
-          >
+          <span className="bf2-zone-sub">Drop cards · multi-select · prompt AI</span>
+          <button className="bf2-ai-btn" onClick={() => handleAiAdvisor()} disabled={aiLoading}>
             {aiLoading ? "Thinking…" : "Get AI view ↗"}
           </button>
         </div>
 
-        {/* Drop zone */}
         <div className={`bf2-drop-zone ${isDragOver ? "bf2-drop-hover" : ""} ${selectedSyms.size > 0 ? "bf2-drop-has" : ""}`}>
           {selectedSyms.size === 0 ? (
-            <span className="bf2-drop-hint">Drag cards here or click cards above to select</span>
+            <span className="bf2-drop-hint">Drag cards here or click to select</span>
           ) : (
             <div className="bf2-drop-chips">
               {[...selectedSyms].map(sym => {
@@ -516,22 +460,16 @@ export default function Portfolio({
                 return (
                   <div key={sym} className="bf2-chip">
                     <span className="bf2-chip-name">{card?.displayName || sym}</span>
-                    <span className="bf2-chip-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>
-                      {fmtPnl(pnl)}
-                    </span>
+                    <span className="bf2-chip-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>{fmtPnl(pnl)}</span>
                     <button className="bf2-chip-x" onClick={() => toggleSelect(sym)}>✕</button>
                   </div>
                 );
               })}
-              <button
-                className="bf2-clear-all"
-                onClick={() => setSelectedSyms(new Set())}
-              >clear all</button>
+              <button className="bf2-clear-all" onClick={() => setSelectedSyms(new Set())}>clear all</button>
             </div>
           )}
         </div>
 
-        {/* AI advice */}
         {aiAdvice && (
           <div className="bf2-ai-box">
             <div className="bf2-ai-head">
@@ -543,11 +481,8 @@ export default function Portfolio({
           </div>
         )}
 
-        {/* Prompt */}
         <div className="bf2-prompt-row">
-          <input
-            className="bf2-prompt-input"
-            type="text"
+          <input className="bf2-prompt-input" type="text"
             placeholder={selectedSyms.size > 0
               ? `Ask about ${[...selectedSyms].map(s => s.replace("THAI_GOLD_BAHT", "Gold").replace(".BK", "")).join(", ")}…`
               : "Ask AI about your battlefield…"}
@@ -555,16 +490,12 @@ export default function Portfolio({
             onChange={e => setActPrompt(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handlePromptSend()}
           />
-          <button
-            className="bf2-prompt-send"
-            onClick={handlePromptSend}
-            disabled={aiLoading || !actPrompt.trim()}
-          >
+          <button className="bf2-prompt-send" onClick={handlePromptSend}
+            disabled={aiLoading || !actPrompt.trim()}>
             {aiLoading ? "…" : "Ask ↗"}
           </button>
         </div>
 
-        {/* Nav shortcuts */}
         <div className="bf2-nav-row">
           <span className="bf2-nav-label">Navigate:</span>
           <button className="bf2-nav-btn" onClick={() => onTabSwitch?.("gold")}>Gold tab →</button>
