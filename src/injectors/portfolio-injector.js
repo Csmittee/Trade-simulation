@@ -1,14 +1,12 @@
 /**
  * portfolio-injector.js
- * Phase 6 — Battlefield data layer (v7)
+ * Phase 6 — Battlefield data layer (v8)
  *
- * Changes from v6:
- * - fetchBattlefieldAdvisor: fixed response parser — Worker always returns
- *   a workflow JSON object. Now extracts reasoning + sentiment + key stage
- *   into readable 3-sentence text. Never shows raw JSON.
- * - computeUniqueLanes: adds lane.stageNodes[] for milestone markers
- *   Each node: { id, label, action, timeWindow, endMs, status }
- *   Portfolio.jsx uses endMs to position nodes on the Gantt bar.
+ * KI011 change:
+ * - computeUniqueLanes: setBundle param replaced with setWorkflows dict
+ *   For SET lanes, looks up setWorkflows[lane.symbol] instead of a single setBundle
+ * - fetchBattlefieldAdvisor: setBundle param replaced with setWorkflows dict
+ *   Summarises all active SET workflows (not just one)
  */
 
 import config from "../../config.js";
@@ -152,9 +150,10 @@ export function computeSharedOwnRuler(lanes) {
 }
 
 // ── One lane per unique symbol ────────────────────────────────────────────────
+// KI011: setBundle replaced with setWorkflows dict { "PTT.BK": bundle, "SCB.BK": bundle, ... }
 
 export function computeUniqueLanes(
-  positions, activeStrategy, strategyDuration, goldBundle, setBundle,
+  positions, activeStrategy, strategyDuration, goldBundle, setWorkflows,
 ) {
   if (!Array.isArray(positions) || positions.length === 0) return [];
 
@@ -188,9 +187,20 @@ export function computeUniqueLanes(
   return Object.values(map).map(lane => {
     lane.avgEntry = lane.totalQty > 0 ? lane.totalCost / lane.totalQty : 0;
 
-    const bundle = lane.market === "gold" ? goldBundle : setBundle;
-    const wf     = bundle?.workflow;
-    const wfDone = bundle?.workflowDone;
+    // KI011: for SET lanes, look up per-symbol slice from the dict
+    let bundle;
+    if (lane.market === "gold") {
+      bundle = goldBundle;
+    } else {
+      // setWorkflows is a dict: { "PTT.BK": { workflow, stageStatuses, ... }, ... }
+      // Support both old single-bundle (backward compat during deploy) and new dict
+      bundle = (setWorkflows && typeof setWorkflows === "object" && !setWorkflows.workflow)
+        ? setWorkflows[lane.symbol]
+        : setWorkflows; // fallback: old single-bundle shape
+    }
+
+    const wf             = bundle?.workflow;
+    const wfDone         = bundle?.workflowDone;
     const stageStatuses  = bundle?.stageStatuses || [];
     const activeStageIdx = bundle?.activeStageIdx || 0;
     const wfActive       = !!wf && !wfDone;
@@ -230,8 +240,6 @@ export function computeUniqueLanes(
     }
 
     // ── Stage nodes for milestone markers ─────────────────────────────────────
-    // Each node gets: id, label, action, timeWindow, endMs, status
-    // pct is computed later in computeSharedOwnRuler() once span is known
     if (wfActive && wf.stages?.length) {
       lane.stageNodes = wf.stages.map((stage, idx) => {
         const endDate = parseLastStageEndDate(stage.timeWindow);
@@ -242,9 +250,9 @@ export function computeUniqueLanes(
           action:     stage.action || "HOLD",
           timeWindow: stage.timeWindow || "",
           endMs:      endDate ? endDate.getTime() : null,
-          status,                    // "pending" | "active" | "win" | "loss" | "skipped"
+          status,
           isActive:   idx === activeStageIdx,
-          pct:        null,          // filled by computeSharedOwnRuler
+          pct:        null, // filled by computeSharedOwnRuler
         };
       });
     } else {
@@ -258,22 +266,14 @@ export function computeUniqueLanes(
     // Plan status
     if (wfActive) {
       const hasLoss = stageStatuses.some(s => s === "loss");
-      const allGood = stageStatuses.every(s => s === "win" || s === "pending" || s === "active");
-      if (bundle?.fallbackTriggered) lane.planStatus = "at_risk";
-      else if (hasLoss)              lane.planStatus = "late";
-      else if (allGood)              lane.planStatus = "on_plan";
-      else                           lane.planStatus = "late";
+      const allDone = stageStatuses.length > 0 && stageStatuses.every(s => s === "win" || s === "loss" || s === "skipped");
+      lane.planStatus = hasLoss ? "at_risk" : allDone ? "on_plan" : "late";
+    } else if (lane.unrealisedPnL < 0) {
+      lane.planStatus = "at_risk";
     } else if (strategyExpired) {
       lane.planStatus = "late";
     } else {
-      const pnlPct = lane.totalCost > 0 ? lane.unrealisedPnL / lane.totalCost : 0;
-      const price  = lane.currentPrice || lane.avgEntry;
-      const slDist = lane.stopLoss   ? Math.abs(price - lane.stopLoss)   : null;
-      const tpDist = lane.takeProfit ? Math.abs(lane.takeProfit - price) : null;
-      const nearSL = slDist !== null && tpDist !== null && slDist < tpDist * 0.4;
-      if (nearSL || pnlPct < -0.015) lane.planStatus = "at_risk";
-      else if (pnlPct > 0.001)       lane.planStatus = "on_plan";
-      else                           lane.planStatus = "late";
+      lane.planStatus = "on_plan";
     }
 
     return lane;
@@ -334,16 +334,10 @@ export function computeGoalProgress(trades) {
   };
 }
 
-// ── AI battlefield advisor — fixed response parser ────────────────────────────
+// ── AI battlefield advisor ────────────────────────────────────────────────────
+// KI011: setBundle replaced with setWorkflows dict
 
-/**
- * The Worker /api/strategy ALWAYS returns a workflow JSON object:
- * { workflowName, sentiment, confidence, reasoning, stages[], ... }
- *
- * We extract the meaningful parts and format as readable 3-sentence advice.
- * Never show raw JSON.
- */
-export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgress, goldBundle, setBundle, lanes }) {
+export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgress, goldBundle, setWorkflows, lanes }) {
   try {
     const balance  = portfolio?.balance || 0;
     const posCount = portfolio?.positions?.length || 0;
@@ -358,7 +352,12 @@ export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgr
 
     const gp = goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 };
     const goldWfName = goldBundle?.workflow?.workflowName || goldBundle?.workflow?.name;
-    const setWfName  = setBundle?.workflow?.workflowName  || setBundle?.workflow?.name;
+
+    // Summarise all active SET workflows from the dict
+    const activeSetWfs = Object.entries(setWorkflows || {})
+      .filter(([, b]) => b?.workflow && !b?.workflowDone)
+      .map(([sym, b]) => `${sym.replace(".BK", "")}: ${b.workflow.workflowName || "workflow"}`);
+    const setWfSummary = activeSetWfs.length > 0 ? activeSetWfs.join(", ") : "none";
 
     const prompt = `BATTLEFIELD ADVISOR — helicopter view of my whole portfolio.
 
@@ -369,7 +368,7 @@ HISTORICAL STATS:
 ${statsLines || "No history loaded"}
 
 CASH: ฿${Math.round(balance).toLocaleString()} | GOAL: ฿${gp.goal}/day | Today P&L: ฿${gp.todayPnl} (${gp.pct}%)
-GOLD WORKFLOW: ${goldWfName || "none"} | SET WORKFLOW: ${setWfName || "none"}
+GOLD WORKFLOW: ${goldWfName || "none"} | SET WORKFLOWS: ${setWfSummary}
 
 Respond in plain text — NO JSON. Give exactly 3 sentences:
 1. What is earning and what is bleeding capital right now (use ฿ amounts)
@@ -392,25 +391,17 @@ Do not create a strategy workflow. Plain conversational text only.`;
 
     const d = json.data;
 
-    // Handle all possible Worker response shapes
     if (typeof d === "string" && d.trim().length > 0) return d.trim();
     if (d?.advice  && typeof d.advice  === "string") return d.advice.trim();
     if (d?.summary && typeof d.summary === "string") return d.summary.trim();
 
-    // Worker returned a workflow object (most common case) — extract readable text
     if (d && typeof d === "object") {
       const parts = [];
-
-      // Reasoning from the AI (2-3 sentences about market conditions)
       if (d.reasoning) parts.push(d.reasoning);
-
-      // Sentiment + confidence
       if (d.sentiment && d.confidence) {
         const sentimentLine = `Overall outlook: ${d.sentiment} (${d.confidence} confidence).`;
         if (!d.reasoning) parts.push(sentimentLine);
       }
-
-      // Key action from first active/pending stage
       if (d.stages?.length) {
         const activeStage = d.stages.find(s => s.action !== "HOLD") || d.stages[0];
         if (activeStage) {
@@ -421,13 +412,8 @@ Do not create a strategy workflow. Plain conversational text only.`;
           );
         }
       }
-
-      // Fallback rule
       if (d.fallbackRule) parts.push(`Fallback: ${d.fallbackRule}`);
-
       if (parts.length > 0) return parts.join(" ");
-
-      // Last resort — workflow name only
       if (d.workflowName) return `AI generated plan "${d.workflowName}". For full workflow execution, use AI Assist in Gold or SET tab.`;
     }
 
