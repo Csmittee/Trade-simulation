@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Tooltip, { TooltipIcon } from "./Tooltip.jsx";
-import { suggestPositionSize, getRiskLabel, calcPortfolioSummary, getRiskDefaults, inferRiskFromSLTP } from "../core/portfolio-engine.js";
+import { suggestPositionSize, getRiskLabel, calcPortfolioSummary, getRiskDefaults, inferRiskFromSLTP, executeSellQty } from "../core/portfolio-engine.js";
 
 const WORKER_BASE = "https://tts-workers.csmittee.workers.dev";
 
@@ -251,33 +251,47 @@ export default function OrderPanel({
   function executeStageAction(stage, stageIdx) {
     if (!canTrade) { setAiError(closedHint); return; }
 
+    const sym = market === "gold" ? "THAI_GOLD_BAHT" : (selectedSymbol || "");
+
     if (stage.action === "BUY" || stage.action === "SCALE IN") {
-      const sym = market === "gold" ? "THAI_GOLD_BAHT" : (selectedSymbol || "SELECTED_STOCK");
-      const entryPrice = workflow.suggestedEntry || currentPrice;
+      const entryPrice   = workflow.suggestedEntry || currentPrice;
       const suggestedQty = market === "gold" ? 1 : 100;
       const result = onBuy({
         symbol: sym, market,
         qty: suggestedQty,
         price: entryPrice,
-        stopLoss: workflow.suggestedStop || null,
-        takeProfit: workflow.suggestedTP || null,
-        strategy: workflow.workflowName,
+        stopLoss:   workflow.suggestedStop || null,
+        takeProfit: workflow.suggestedTP   || null,
+        strategy:   workflow.workflowName,
         simMode,
       });
       if (result?.error) { setAiError(`Trade rejected: ${result.error}`); return; }
       onLogActivity?.({ type: "buy", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} executed at ฿${entryPrice?.toLocaleString()}` });
 
     } else if (stage.action === "SELL" || stage.action === "EXIT") {
-      const result = onSell(null, workflow.suggestedTP || currentPrice);
-      if (result?.error) { setAiError(`Trade rejected: ${result.error}`); return; }
-      onLogActivity?.({ type: "sell", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} executed` });
+      // Use FIFO executeSellQty — sell ALL held units of this symbol
+      // (L325 rule: always executeSellQty for user-facing sells, never executeSell directly)
+      const closePrice = workflow.suggestedTP || currentPrice;
+      const openLots   = portfolio.positions.filter(p => p.market === market && p.symbol === sym);
+      const totalQty   = openLots.reduce((s, p) => s + p.qty, 0);
+
+      if (totalQty === 0) {
+        // No positions open — still mark executed so user can record outcome
+        setAiError(null);
+        onLogActivity?.({ type: "info", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} — no open positions to close` });
+      } else {
+        const result = executeSellQty(portfolio, market, sym, totalQty, closePrice);
+        if (result?.error) { setAiError(`Trade rejected: ${result.error}`); return; }
+        setPortfolio(result.portfolio);
+        onLogActivity?.({ type: "sell", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} — sold ${totalQty} @ ฿${closePrice?.toLocaleString()}` });
+      }
 
     } else {
-      // HOLD — no trade, just log
+      // HOLD — no trade needed
       onLogActivity?.({ type: "info", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: HOLD — no trade placed` });
     }
 
-    // Fix C — mark this stage as executed so outcome buttons appear
+    // Mark stage executed — outcome buttons now appear
     setStageExecuted(prev => {
       const next = [...prev];
       next[stageIdx] = true;
