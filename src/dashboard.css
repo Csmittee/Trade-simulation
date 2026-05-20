@@ -1253,6 +1253,18 @@ a { color: var(--gold); }
   text-align: center;
 }
 
+/* Error shown inline near outcome buttons — always visible even after execute */
+.wf-exec-error {
+  font-size: 11px;
+  color: var(--red);
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
 .wf-outcome-row {
   display: flex;
   align-items: center;
