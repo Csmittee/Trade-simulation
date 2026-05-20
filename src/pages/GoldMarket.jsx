@@ -316,19 +316,22 @@ export default function GoldMarket({
                       );
                     }
                     return (
-                      <div className="positions-table positions-table--10col">
-                        {/* 10-column header */}
-                        <div className="pos-row pos-row--10col header">
-                          <span>Symbol</span><span>Qty</span><span>Entry</span><span>Price</span>
-                          <span>P&L</span><span>P&L%</span><span>Stop</span><span>Target</span>
-                          <span>Strategy</span><span>Status</span>
+                      <div className="positions-table positions-table--12col">
+                        {/* 12-column header: Time | Side | Symbol | Qty | Entry | Price | P&L | P&L% | Stop | Target | Strategy | Status */}
+                        <div className="pos-row pos-row--12col header">
+                          <span>Time</span><span>Side</span><span>Symbol</span><span>Qty</span>
+                          <span>Entry</span><span>Price</span><span>P&L</span><span>P&L%</span>
+                          <span>Stop</span><span>Target</span><span>Strategy</span><span>Status</span>
                         </div>
                         {allRows.map((row, i) => {
                           if (row._rowType === "open") {
                             const pnlUp = row.unrealisedPnL >= 0;
+                            const openTime = row.openedAt ? new Date(row.openedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
                             return (
-                              <div key={row.id || i} className="pos-row pos-row--10col">
-                                <span className="pos-symbol">{row.symbol}</span>
+                              <div key={row.id || i} className="pos-row pos-row--12col">
+                                <span className="pos-time">{openTime}</span>
+                                <span className="pos-side pos-side--buy">▲ BUY</span>
+                                <span className="pos-symbol">{row.symbol?.replace("THAI_GOLD_","")}</span>
                                 <span>{row.qty}</span>
                                 <span>฿{row.entryPrice?.toLocaleString()}</span>
                                 <span>฿{row.currentPrice?.toLocaleString()}</span>
@@ -345,11 +348,14 @@ export default function GoldMarket({
                               </div>
                             );
                           } else {
-                            // D1 closed row — uses snake_case fields
+                            // D1 closed row — snake_case fields
                             const pnlUp = (row.pnl ?? 0) >= 0;
+                            const closeTime = row.closed_at ? new Date(row.closed_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
                             return (
-                              <div key={row.id || i} className="pos-row pos-row--10col pos-row--closed">
-                                <span className="pos-symbol">{row.symbol}</span>
+                              <div key={row.id || i} className="pos-row pos-row--12col pos-row--closed">
+                                <span className="pos-time">{closeTime}</span>
+                                <span className="pos-side pos-side--sell">▼ SELL</span>
+                                <span className="pos-symbol">{row.symbol?.replace("THAI_GOLD_","")}</span>
                                 <span>{row.qty}</span>
                                 <span>฿{Math.round(row.entry_price)?.toLocaleString()}</span>
                                 <span>{row.exit_price ? `฿${Math.round(row.exit_price)?.toLocaleString()}` : "—"}</span>
