@@ -1,14 +1,14 @@
 /**
- * Portfolio.jsx — The Battlefield v5
+ * Portfolio.jsx — The Battlefield v6
  * Phase 6
  *
- * Changes from v4:
- * - Own scale mode: each lane uses lane.ownScaleProgress (position open → last stage end date)
- * - Own scale ruler: shows date labels instead of clock times
- *   Labels computed per-lane from ownScaleOpenDate → ownScaleEndDate
- * - Shared clock ruler unchanged (09:00 → 17:00 ICT)
- * - Ruler labels in own scale mode: single shared ruler from the earliest open
- *   to the latest workflow end date across all visible lanes
+ * Swim lane rendering fix:
+ * - Own scale: Gantt model
+ *     Bar = full colored span from lane open → plan end (always 100% of its slot)
+ *     Now-marker (pulse dot) = moves left→right showing current time position
+ *     If "now" is before plan start → dot at left edge
+ *     If "now" is after plan end   → dot at right edge (plan expired)
+ * - Shared clock: unchanged — bar = session progress fill
  */
 
 import { useState, useCallback } from "react";
@@ -18,7 +18,7 @@ import {
   computeGoalProgress,
   fetchTradeHistory,
   fetchBattlefieldAdvisor,
-  computeOwnScaleRuler,
+  computeSharedOwnRuler,
   DAILY_GOAL,
 } from "../injectors/portfolio-injector.js";
 import { calcPortfolioSummary } from "../core/portfolio-engine.js";
@@ -30,7 +30,6 @@ const SORT_OPTIONS = [
   { key: "at_risk",     label: "At risk" },
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function planColor(s) {
   return { on_plan: "#22c55e", late: "#f59e0b", at_risk: "#ef4444" }[s] || "#4b5563";
 }
@@ -58,82 +57,20 @@ function sortCards(cards, key) {
 function fmt(n)    { return Math.round(n).toLocaleString("en-US"); }
 function fmtPnl(n) { return `${n >= 0 ? "+" : ""}฿${fmt(Math.abs(n))}`; }
 
-// ── Compute shared own-scale ruler across all visible lanes ───────────────────
-function computeSharedOwnRuler(lanes) {
-  // Find earliest open and latest end across all lanes that have own scale data
-  let earliestOpen = null;
-  let latestEnd    = null;
-
-  lanes.forEach(lane => {
-    if (lane.ownScaleOpenDate) {
-      const t = new Date(lane.ownScaleOpenDate).getTime();
-      if (!earliestOpen || t < earliestOpen) earliestOpen = t;
-    }
-    if (lane.ownScaleEndDate) {
-      const t = new Date(lane.ownScaleEndDate).getTime();
-      if (!latestEnd || t > latestEnd) latestEnd = t;
-    }
-  });
-
-  if (!earliestOpen || !latestEnd || latestEnd <= earliestOpen) return null;
-
-  const spanMs   = latestEnd - earliestOpen;
-  const sameDay  = spanMs < 24 * 3600 * 1000;
-  const labels   = [];
-
-  for (let i = 0; i <= 4; i++) {
-    const pct = i / 4;
-    const ms  = earliestOpen + pct * spanMs;
-    const d   = new Date(ms);
-    const label = sameDay
-      ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok" })
-      : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Bangkok" });
-    labels.push({ pct: Math.round(pct * 100), label });
-  }
-
-  // Also compute per-lane fill % in this shared own-scale space
-  lanes.forEach(lane => {
-    if (lane.ownScaleOpenDate && lane.ownScaleEndDate) {
-      const laneOpenMs = new Date(lane.ownScaleOpenDate).getTime();
-      const now        = Date.now();
-      // Position in shared space: where is "now" relative to earliest→latest
-      lane.sharedOwnProgress = Math.min(1, Math.max(0, (now - earliestOpen) / spanMs));
-      // Lane start offset (if opened after earliest)
-      lane.sharedOwnStart    = Math.min(1, Math.max(0, (laneOpenMs - earliestOpen) / spanMs));
-    } else {
-      lane.sharedOwnProgress = lane.ownScaleProgress || lane.timeProgress;
-      lane.sharedOwnStart    = 0;
-    }
-  });
-
-  return labels;
-}
-
 // ── Dial Gauge ────────────────────────────────────────────────────────────────
 function DialGauge({ pct, label, sublabel, color }) {
   const clamp = Math.min(1, Math.max(0, pct));
   const angle = -180 + clamp * 180;
   const r = 20, cx = 26, cy = 26;
-  const toXY = deg => ({
-    x: cx + r * Math.cos((deg * Math.PI) / 180),
-    y: cy + r * Math.sin((deg * Math.PI) / 180),
-  });
-  const start = toXY(-180);
-  const end   = toXY(angle);
+  const toXY = deg => ({ x: cx + r * Math.cos((deg * Math.PI) / 180), y: cy + r * Math.sin((deg * Math.PI) / 180) });
+  const start = toXY(-180), end = toXY(angle);
   const large = clamp > 0.5 ? 1 : 0;
   return (
     <div className="bf2-gauge">
       <svg width="52" height="30" viewBox="0 0 52 30">
-        <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
-          fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3" strokeLinecap="round" />
-        {clamp > 0 && (
-          <path d={`M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`}
-            fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />
-        )}
-        <line x1={cx} y1={cy}
-          x2={cx + 13 * Math.cos((angle * Math.PI) / 180)}
-          y2={cy + 13 * Math.sin((angle * Math.PI) / 180)}
-          stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+        <path d={`M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}`} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3" strokeLinecap="round" />
+        {clamp > 0 && <path d={`M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />}
+        <line x1={cx} y1={cy} x2={cx + 13*Math.cos((angle*Math.PI)/180)} y2={cy + 13*Math.sin((angle*Math.PI)/180)} stroke={color} strokeWidth="1.5" strokeLinecap="round" />
         <circle cx={cx} cy={cy} r="2" fill={color} />
       </svg>
       <span className="bf2-gauge-val" style={{ color }}>{label}</span>
@@ -144,64 +81,36 @@ function DialGauge({ pct, label, sublabel, color }) {
 
 // ── Asset Card ────────────────────────────────────────────────────────────────
 function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate }) {
-  const pnl     = Math.round(lane.unrealisedPnL || 0);
-  const histPnl = Math.round(stats?.totalPnl || 0);
-  const wr      = stats?.winRate ?? null;
-  const rr      = stats?.returnRatio ?? null;
-  const cost    = Math.round(lane.totalCost || 0);
-  const isRisk  = lane.planStatus === "at_risk";
-  const expired = lane.strategyExpired;
-
+  const pnl = Math.round(lane.unrealisedPnL || 0), histPnl = Math.round(stats?.totalPnl || 0);
+  const wr = stats?.winRate ?? null, rr = stats?.returnRatio ?? null;
+  const cost = Math.round(lane.totalCost || 0);
   return (
-    <div
-      className={`bf2-card ${isSelected ? "bf2-card-selected" : ""} ${isRisk ? "bf2-card-risk" : ""}`}
-      onClick={() => onSelect(lane.symbol)}
-      draggable
-      onDragStart={e => { e.dataTransfer.setData("bf-symbol", lane.symbol); onDragStart(lane.symbol); }}
-    >
+    <div className={`bf2-card ${isSelected ? "bf2-card-selected" : ""} ${lane.planStatus === "at_risk" ? "bf2-card-risk" : ""}`}
+      onClick={() => onSelect(lane.symbol)} draggable
+      onDragStart={e => { e.dataTransfer.setData("bf-symbol", lane.symbol); onDragStart(lane.symbol); }}>
       <div className="bf2-card-top">
         <div>
           <span className="bf2-card-name">{lane.displayName}</span>
           <span className="bf2-card-mkt">{lane.market === "gold" ? "Gold" : "SET"}</span>
         </div>
-        <span className="bf2-card-status" style={{ background: planBg(lane.planStatus), color: planColor(lane.planStatus) }}>
-          {planLabel(lane.planStatus)}
-        </span>
+        <span className="bf2-card-status" style={{ background: planBg(lane.planStatus), color: planColor(lane.planStatus) }}>{planLabel(lane.planStatus)}</span>
       </div>
-
       {lane.protocol && (
-        <div className="bf2-card-proto" style={{ color: expired ? "#f59e0b" : undefined }}>
-          {expired ? "⏱ " : ""}{lane.protocol}
-          {lane.protocolDetail && ` · ${lane.protocolDetail}`}
-          {expired && " — expired"}
+        <div className="bf2-card-proto" style={{ color: lane.strategyExpired ? "#f59e0b" : undefined }}>
+          {lane.strategyExpired ? "⏱ " : ""}{lane.protocol}{lane.protocolDetail && ` · ${lane.protocolDetail}`}{lane.strategyExpired && " — expired"}
         </div>
       )}
-
       <div className="bf2-gauges">
-        <DialGauge
-          pct={Math.abs(pnl) / Math.max(500, Math.abs(pnl) * 1.5)}
-          label={fmtPnl(pnl)} sublabel="open P&L"
-          color={pnl >= 0 ? "#22c55e" : "#ef4444"}
-        />
-        {wr !== null ? (
-          <DialGauge pct={wr / 100} label={`${wr}%`} sublabel="win rate"
-            color={wr >= 60 ? "#22c55e" : wr >= 40 ? "#f59e0b" : "#ef4444"} />
-        ) : (
-          <div className="bf2-gauge bf2-gauge-empty">
-            <span className="bf2-gauge-sub" style={{ textAlign: "center" }}>load D1<br/>for stats</span>
-          </div>
-        )}
-        {rr !== null && (
-          <DialGauge pct={Math.min(1, Math.abs(rr) / 10)} label={`${rr > 0 ? "+" : ""}${rr}%`}
-            sublabel="return/inv" color={rr >= 0 ? "#60a5fa" : "#ef4444"} />
-        )}
+        <DialGauge pct={Math.abs(pnl)/Math.max(500, Math.abs(pnl)*1.5)} label={fmtPnl(pnl)} sublabel="open P&L" color={pnl >= 0 ? "#22c55e" : "#ef4444"} />
+        {wr !== null
+          ? <DialGauge pct={wr/100} label={`${wr}%`} sublabel="win rate" color={wr >= 60 ? "#22c55e" : wr >= 40 ? "#f59e0b" : "#ef4444"} />
+          : <div className="bf2-gauge bf2-gauge-empty"><span className="bf2-gauge-sub" style={{textAlign:"center"}}>load D1<br/>for stats</span></div>}
+        {rr !== null && <DialGauge pct={Math.min(1,Math.abs(rr)/10)} label={`${rr>0?"+":""}${rr}%`} sublabel="return/inv" color={rr >= 0 ? "#60a5fa" : "#ef4444"} />}
       </div>
-
       <div className="bf2-card-footer">
         <span className="bf2-card-cost">฿{fmt(cost)} invested</span>
         {stats && <span className="bf2-card-hist" style={{ color: histPnl >= 0 ? "#22c55e" : "#ef4444" }}>hist {fmtPnl(histPnl)}</span>}
       </div>
-
       <button className="bf2-card-nav" onClick={e => { e.stopPropagation(); onNavigate(lane.market); }}>
         Go to {lane.market === "gold" ? "Gold" : "SET"} →
       </button>
@@ -236,15 +145,10 @@ export default function Portfolio({
   const buildCards = () => {
     const cards = lanes.map(lane => ({ ...lane, stats: assetStats[lane.symbol] || null }));
     Object.values(assetStats).forEach(s => {
-      if (!lanes.find(l => l.symbol === s.symbol)) {
-        cards.push({
-          symbol: s.symbol, displayName: s.symbol.replace(".BK", ""),
-          market: s.market, planStatus: "no_plan",
-          unrealisedPnL: 0, totalCost: 0, positionCount: 0,
-          protocol: null, timeProgress: 0, ownScaleProgress: 0,
-          strategyExpired: false, stats: s,
-        });
-      }
+      if (!lanes.find(l => l.symbol === s.symbol))
+        cards.push({ symbol: s.symbol, displayName: s.symbol.replace(".BK",""), market: s.market,
+          planStatus: "no_plan", unrealisedPnL: 0, totalCost: 0, positionCount: 0,
+          protocol: null, timeProgress: 0, strategyExpired: false, stats: s });
     });
     return sortCards(cards, sortKey);
   };
@@ -266,48 +170,34 @@ export default function Portfolio({
   const forceAddSelect = sym => setSelectedSyms(prev => new Set([...prev, sym]));
   const selectedCards  = cards.filter(c => selectedSyms.has(c.symbol));
 
-  const handleAiAdvisor = useCallback(async (extraPrompt = "") => {
+  const handleAiAdvisor = useCallback(async (extra = "") => {
     setAiLoading(true);
     try {
       const advice = await fetchBattlefieldAdvisor({
-        portfolio, assetStats,
-        goalProgress: goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 },
-        goldBundle, setBundle,
-        lanes: selectedCards.length > 0 ? selectedCards : lanes,
+        portfolio, assetStats, goalProgress: goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 },
+        goldBundle, setBundle, lanes: selectedCards.length > 0 ? selectedCards : lanes,
       });
-      setAiAdvice(extraPrompt ? `[${extraPrompt}]\n\n${advice}` : advice);
+      setAiAdvice(extra ? `[${extra}]\n\n${advice}` : advice);
     } finally { setAiLoading(false); }
   }, [portfolio, assetStats, goalProgress, goldBundle, setBundle, lanes, selectedCards]);
 
-  const handlePromptSend = () => {
-    if (!actPrompt.trim()) return;
-    handleAiAdvisor(actPrompt);
-    setActPrompt("");
-  };
+  const handlePromptSend = () => { if (!actPrompt.trim()) return; handleAiAdvisor(actPrompt); setActPrompt(""); };
 
-  // ── Ruler computation ─────────────────────────────────────────────────────
+  // ── Ruler & lane rendering prep ───────────────────────────────────────────
   const visibleLanes = lanesCollapsed ? [] : lanes.slice(0, 5);
   const hasMore      = lanes.length > 5;
 
-  // Shared clock ruler: fixed session times
+  // Own scale: mutates visibleLanes with ownScaleBarStart/End/NowPct
+  const ownRulerLabels = scaleMode === "own" ? computeSharedOwnRuler(visibleLanes) : null;
+
+  // Shared clock ruler ticks
   const hasGold         = lanes.some(l => l.market === "gold");
-  const sessionStart    = hasGold ? "09:00" : "10:00";
-  const sharedTimeLabels = [sessionStart, "11:00", "13:00", "15:00", "17:00"];
-
-  // Own scale ruler: computed from lane dates
-  // Run computeSharedOwnRuler (mutates lane.sharedOwnProgress + lane.sharedOwnStart)
-  const ownScaleLabels = scaleMode === "own"
-    ? computeSharedOwnRuler(visibleLanes)
-    : null;
-
-  const rulerLabels = scaleMode === "own"
-    ? (ownScaleLabels || sharedTimeLabels.map((label, i) => ({ pct: i * 25, label })))
-    : sharedTimeLabels.map((label, i) => ({ pct: i * 25, label }));
+  const sharedLabels    = [hasGold?"09:00":"10:00","11:00","13:00","15:00","17:00"].map((label,i) => ({ pct: i*25, label }));
+  const rulerLabels     = scaleMode === "own" ? (ownRulerLabels || sharedLabels) : sharedLabels;
 
   return (
     <div className="bf2-root">
 
-      {/* ── Header ── */}
       <div className="bf2-header">
         <div className="bf2-header-left">
           <span className="bf2-title">The Battlefield</span>
@@ -317,16 +207,13 @@ export default function Portfolio({
           {goalProgress ? (
             <div className="bf2-goal">
               <span className="bf2-goal-label">Today</span>
-              <span className="bf2-goal-val" style={{
-                color: goalProgress.status === "achieved" ? "#22c55e"
-                     : goalProgress.todayPnl > 0 ? "#f59e0b" : "#ef4444"
-              }}>฿{fmt(goalProgress.todayPnl)} / ฿{goalProgress.goal}</span>
-              <div className="bf2-goal-track"><div className="bf2-goal-fill" style={{ width: `${goalProgress.pct}%` }} /></div>
+              <span className="bf2-goal-val" style={{ color: goalProgress.status==="achieved"?"#22c55e":goalProgress.todayPnl>0?"#f59e0b":"#ef4444" }}>
+                ฿{fmt(goalProgress.todayPnl)} / ฿{goalProgress.goal}
+              </span>
+              <div className="bf2-goal-track"><div className="bf2-goal-fill" style={{ width:`${goalProgress.pct}%` }} /></div>
             </div>
           ) : (
-            <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading}>
-              {d1Loading ? "Loading…" : "Load D1 stats"}
-            </button>
+            <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading}>{d1Loading?"Loading…":"Load D1 stats"}</button>
           )}
           <span className="bf2-equity">Equity ฿{fmt(summary.totalEquity)}</span>
         </div>
@@ -340,30 +227,22 @@ export default function Portfolio({
           <span className="bf2-zone-icon">⟶</span>
           <span className="bf2-zone-label">Zone 1 — Plan</span>
           <span className="bf2-zone-sub">
-            {scaleMode === "shared"
-              ? "Session clock · 17:00 ICT = right edge"
-              : "Own scale · right edge = last stage end date"}
+            {scaleMode === "shared" ? "Session clock · 17:00 ICT = right edge" : "Own scale · full plan span · dot = now"}
           </span>
           <div className="bf2-lane-controls">
-            <button className={`bf2-scale-btn ${scaleMode === "shared" ? "active" : ""}`} onClick={() => setScaleMode("shared")}>shared clock</button>
-            <button className={`bf2-scale-btn ${scaleMode === "own" ? "active" : ""}`} onClick={() => setScaleMode("own")}>own scale</button>
-            <button className="bf2-collapse-btn" onClick={() => setLanesCollapsed(v => !v)}>
-              {lanesCollapsed ? "▼ show" : "▲ hide"}
-            </button>
+            <button className={`bf2-scale-btn ${scaleMode==="shared"?"active":""}`} onClick={() => setScaleMode("shared")}>shared clock</button>
+            <button className={`bf2-scale-btn ${scaleMode==="own"?"active":""}`} onClick={() => setScaleMode("own")}>own scale</button>
+            <button className="bf2-collapse-btn" onClick={() => setLanesCollapsed(v => !v)}>{lanesCollapsed?"▼ show":"▲ hide"}</button>
           </div>
         </div>
 
         {!lanesCollapsed && (
           <>
-            {/* Ruler */}
             <div className="bf2-timeline-ruler">
               <div className="bf2-ruler-spacer" />
               <div className="bf2-ruler-track">
                 {rulerLabels.map((item, i) => (
-                  <span key={i} className="bf2-ruler-tick"
-                    style={{ left: typeof item === "object" ? `${item.pct}%` : `${i * 25}%` }}>
-                    {typeof item === "object" ? item.label : item}
-                  </span>
+                  <span key={i} className="bf2-ruler-tick" style={{ left: `${item.pct}%` }}>{item.label}</span>
                 ))}
               </div>
             </div>
@@ -373,51 +252,81 @@ export default function Portfolio({
             ) : (
               <div className="bf2-lanes">
                 {visibleLanes.map(lane => {
-                  // Choose progress value based on scale mode
-                  const rawPct = scaleMode === "own"
-                    ? (lane.sharedOwnProgress ?? lane.ownScaleProgress ?? lane.timeProgress)
-                    : lane.timeProgress;
+                  const col = planColor(lane.planStatus);
+                  const bg  = planBg(lane.planStatus);
+                  const pnl = Math.round(lane.unrealisedPnL);
 
-                  const fillPct = Math.max(3, Math.round(rawPct * 100));
-                  const col     = planColor(lane.planStatus);
-                  const bg      = planBg(lane.planStatus);
-                  const pnl     = Math.round(lane.unrealisedPnL);
+                  if (scaleMode === "own") {
+                    // ── GANTT MODE ────────────────────────────────────────────
+                    // Bar occupies barStart%→barEnd% of track
+                    // Now-marker sits at nowPct% of track
+                    const barStartPct = Math.round((lane.ownScaleBarStart ?? 0) * 100);
+                    const barEndPct   = Math.round((lane.ownScaleBarEnd   ?? 1) * 100);
+                    const barWidthPct = Math.max(2, barEndPct - barStartPct);
+                    const nowPct      = Math.round((lane.ownScaleNowPct   ?? 0) * 100);
+                    // Is now inside this lane's bar?
+                    const nowInBar = nowPct >= barStartPct && nowPct <= barEndPct;
 
-                  // In own scale, show a "lane start" offset if position opened after earliest
-                  const startPct = scaleMode === "own"
-                    ? Math.round((lane.sharedOwnStart ?? 0) * 100)
-                    : 0;
-
-                  return (
-                    <div key={lane.symbol} className="bf2-lane">
-                      <div className="bf2-lane-name">{lane.displayName}</div>
-                      <div className="bf2-lane-track">
-                        {/* Offset spacer for own scale */}
-                        {startPct > 0 && (
-                          <div style={{ width: `${startPct}%`, flexShrink: 0 }} />
-                        )}
-                        <div className="bf2-lane-fill"
-                          style={{
-                            width: `${Math.max(3, fillPct - startPct)}%`,
-                            background: bg,
+                    return (
+                      <div key={lane.symbol} className="bf2-lane">
+                        <div className="bf2-lane-name">{lane.displayName}</div>
+                        <div className="bf2-lane-track" style={{ position: "relative" }}>
+                          {/* Full plan bar */}
+                          <div style={{
+                            position:    "absolute",
+                            left:        `${barStartPct}%`,
+                            width:       `${barWidthPct}%`,
+                            top:         0, bottom: 0,
+                            background:  bg,
+                            borderLeft:  `2px solid ${col}`,
                             borderRight: `2px solid ${col}`,
+                            borderRadius: "3px",
+                            display:     "flex",
+                            alignItems:  "center",
+                            paddingLeft: "6px",
+                            overflow:    "hidden",
                           }}>
-                          <span className="bf2-lane-proto">
-                            {lane.protocol || "manual"}
-                            {lane.protocolDetail && ` · ${lane.protocolDetail}`}
-                            {lane.strategyExpired && " ⏱"}
-                          </span>
+                            <span className="bf2-lane-proto" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {lane.protocol || "manual"}
+                              {lane.protocolDetail && ` · ${lane.protocolDetail}`}
+                              {lane.strategyExpired && " ⏱"}
+                            </span>
+                          </div>
+                          {/* Now-marker (pulse dot) */}
+                          <div className="bf2-lane-pulse" style={{
+                            position:  "absolute",
+                            left:      `${nowPct}%`,
+                            top:       "50%",
+                            transform: "translateY(-50%) translateX(-50%)",
+                            background: nowInBar ? col : "rgba(255,255,255,0.3)",
+                            zIndex: 2,
+                          }} />
                         </div>
-                        <div className="bf2-lane-pulse" style={{ left: `${fillPct}%`, background: col }} />
+                        <span className="bf2-lane-badge" style={{ background: bg, color: col }}>{planLabel(lane.planStatus)}</span>
+                        <span className="bf2-lane-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>{fmtPnl(pnl)}</span>
                       </div>
-                      <span className="bf2-lane-badge" style={{ background: bg, color: col }}>
-                        {planLabel(lane.planStatus)}
-                      </span>
-                      <span className="bf2-lane-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>
-                        {fmtPnl(pnl)}
-                      </span>
-                    </div>
-                  );
+                    );
+                  } else {
+                    // ── SHARED CLOCK MODE ─────────────────────────────────────
+                    const fillPct = Math.max(3, Math.round(lane.timeProgress * 100));
+                    return (
+                      <div key={lane.symbol} className="bf2-lane">
+                        <div className="bf2-lane-name">{lane.displayName}</div>
+                        <div className="bf2-lane-track">
+                          <div className="bf2-lane-fill" style={{ width:`${fillPct}%`, background: bg, borderRight:`2px solid ${col}` }}>
+                            <span className="bf2-lane-proto">
+                              {lane.protocol || "manual"}
+                              {lane.protocolDetail && ` · ${lane.protocolDetail}`}
+                              {lane.strategyExpired && " ⏱"}
+                            </span>
+                          </div>
+                          <div className="bf2-lane-pulse" style={{ left:`${fillPct}%`, background: col }} />
+                        </div>
+                        <span className="bf2-lane-badge" style={{ background: bg, color: col }}>{planLabel(lane.planStatus)}</span>
+                        <span className="bf2-lane-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>{fmtPnl(pnl)}</span>
+                      </div>
+                    );
+                  }
                 })}
                 {hasMore && <div className="bf2-lanes-more">+{lanes.length - 5} more — see cards ↓</div>}
               </div>
@@ -428,11 +337,7 @@ export default function Portfolio({
               <span className="bf2-leg-dot" style={{ background: "#f59e0b" }} /> alert
               <span className="bf2-leg-dot" style={{ background: "#ef4444" }} /> risk
               <span className="bf2-leg-dot" style={{ background: "#4b5563" }} /> ⏱ expired
-              <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: "10px" }}>
-                {scaleMode === "own"
-                  ? "own scale · right edge = last stage end date"
-                  : "bar = session progress · 17:00 ICT = right edge"}
-              </span>
+              {scaleMode === "own" && <span style={{ marginLeft: 8, color: "var(--text-muted)", fontSize: "10px" }}>bar = full plan span · dot = now</span>}
             </div>
           </>
         )}
@@ -443,74 +348,57 @@ export default function Portfolio({
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">◉</span>
           <span className="bf2-zone-label">Zone 2 — Do + Check</span>
-          <span className="bf2-zone-sub">
-            {selectedSyms.size > 0 ? `${selectedSyms.size} selected — drag or click Act ↓` : "Click to select · drag to Act zone"}
-          </span>
+          <span className="bf2-zone-sub">{selectedSyms.size > 0 ? `${selectedSyms.size} selected — drag or click Act ↓` : "Click to select · drag to Act zone"}</span>
           <div className="bf2-sort-row">
             <span className="bf2-sort-label">Sort:</span>
             {SORT_OPTIONS.map(o => (
-              <button key={o.key} className={`bf2-sort-btn ${sortKey === o.key ? "active" : ""}`}
-                onClick={() => setSortKey(o.key)}>{o.label}</button>
+              <button key={o.key} className={`bf2-sort-btn ${sortKey===o.key?"active":""}`} onClick={() => setSortKey(o.key)}>{o.label}</button>
             ))}
           </div>
-          {!d1Loaded && (
-            <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading} style={{ marginLeft: 6 }}>
-              {d1Loading ? "…" : "Load D1 stats"}
-            </button>
-          )}
+          {!d1Loaded && <button className="bf2-load-btn" onClick={handleLoadD1} disabled={d1Loading} style={{marginLeft:6}}>{d1Loading?"…":"Load D1 stats"}</button>}
         </div>
 
-        {cards.length === 0 ? (
-          <div className="bf2-empty-cards">No positions or history — open a position or load D1 stats</div>
-        ) : (
-          <div className="bf2-cards-scroll">
-            {cards.map(card => (
-              <AssetCard
-                key={card.symbol} lane={card} stats={card.stats}
-                isSelected={selectedSyms.has(card.symbol)}
-                onSelect={toggleSelect} onDragStart={forceAddSelect}
-                onNavigate={mkt => onTabSwitch?.(mkt === "gold" ? "gold" : "set")}
-              />
-            ))}
-          </div>
-        )}
+        {cards.length === 0
+          ? <div className="bf2-empty-cards">No positions or history — open a position or load D1 stats</div>
+          : <div className="bf2-cards-scroll">
+              {cards.map(card => (
+                <AssetCard key={card.symbol} lane={card} stats={card.stats}
+                  isSelected={selectedSyms.has(card.symbol)}
+                  onSelect={toggleSelect} onDragStart={forceAddSelect}
+                  onNavigate={mkt => onTabSwitch?.(mkt === "gold" ? "gold" : "set")} />
+              ))}
+            </div>}
       </section>
 
       {/* ══ ZONE 3 — ACT ══ */}
-      <section
-        className="bf2-zone bf2-act-zone"
+      <section className="bf2-zone bf2-act-zone"
         onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
         onDragLeave={() => setIsDragOver(false)}
-        onDrop={e => { e.preventDefault(); setIsDragOver(false); const sym = e.dataTransfer.getData("bf-symbol"); if (sym) forceAddSelect(sym); }}
-      >
+        onDrop={e => { e.preventDefault(); setIsDragOver(false); const sym = e.dataTransfer.getData("bf-symbol"); if (sym) forceAddSelect(sym); }}>
         <div className="bf2-zone-head">
           <span className="bf2-zone-icon">⚡</span>
           <span className="bf2-zone-label">Zone 3 — Act</span>
           <span className="bf2-zone-sub">Drop cards · multi-select · prompt AI</span>
-          <button className="bf2-ai-btn" onClick={() => handleAiAdvisor()} disabled={aiLoading}>
-            {aiLoading ? "Thinking…" : "Get AI view ↗"}
-          </button>
+          <button className="bf2-ai-btn" onClick={() => handleAiAdvisor()} disabled={aiLoading}>{aiLoading?"Thinking…":"Get AI view ↗"}</button>
         </div>
 
-        <div className={`bf2-drop-zone ${isDragOver ? "bf2-drop-hover" : ""} ${selectedSyms.size > 0 ? "bf2-drop-has" : ""}`}>
-          {selectedSyms.size === 0 ? (
-            <span className="bf2-drop-hint">Drag cards here or click to select</span>
-          ) : (
-            <div className="bf2-drop-chips">
-              {[...selectedSyms].map(sym => {
-                const card = cards.find(c => c.symbol === sym);
-                const pnl  = Math.round(card?.unrealisedPnL || 0);
-                return (
-                  <div key={sym} className="bf2-chip">
-                    <span className="bf2-chip-name">{card?.displayName || sym}</span>
-                    <span className="bf2-chip-pnl" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>{fmtPnl(pnl)}</span>
-                    <button className="bf2-chip-x" onClick={() => toggleSelect(sym)}>✕</button>
-                  </div>
-                );
-              })}
-              <button className="bf2-clear-all" onClick={() => setSelectedSyms(new Set())}>clear all</button>
-            </div>
-          )}
+        <div className={`bf2-drop-zone ${isDragOver?"bf2-drop-hover":""} ${selectedSyms.size>0?"bf2-drop-has":""}`}>
+          {selectedSyms.size === 0
+            ? <span className="bf2-drop-hint">Drag cards here or click to select</span>
+            : <div className="bf2-drop-chips">
+                {[...selectedSyms].map(sym => {
+                  const card = cards.find(c => c.symbol === sym);
+                  const pnl  = Math.round(card?.unrealisedPnL || 0);
+                  return (
+                    <div key={sym} className="bf2-chip">
+                      <span className="bf2-chip-name">{card?.displayName || sym}</span>
+                      <span className="bf2-chip-pnl" style={{ color: pnl>=0?"#22c55e":"#ef4444" }}>{fmtPnl(pnl)}</span>
+                      <button className="bf2-chip-x" onClick={() => toggleSelect(sym)}>✕</button>
+                    </div>
+                  );
+                })}
+                <button className="bf2-clear-all" onClick={() => setSelectedSyms(new Set())}>clear all</button>
+              </div>}
         </div>
 
         {aiAdvice && (
@@ -527,16 +415,11 @@ export default function Portfolio({
         <div className="bf2-prompt-row">
           <input className="bf2-prompt-input" type="text"
             placeholder={selectedSyms.size > 0
-              ? `Ask about ${[...selectedSyms].map(s => s.replace("THAI_GOLD_BAHT", "Gold").replace(".BK", "")).join(", ")}…`
+              ? `Ask about ${[...selectedSyms].map(s=>s.replace("THAI_GOLD_BAHT","Gold").replace(".BK","")).join(", ")}…`
               : "Ask AI about your battlefield…"}
-            value={actPrompt}
-            onChange={e => setActPrompt(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handlePromptSend()}
-          />
-          <button className="bf2-prompt-send" onClick={handlePromptSend}
-            disabled={aiLoading || !actPrompt.trim()}>
-            {aiLoading ? "…" : "Ask ↗"}
-          </button>
+            value={actPrompt} onChange={e => setActPrompt(e.target.value)}
+            onKeyDown={e => e.key==="Enter" && handlePromptSend()} />
+          <button className="bf2-prompt-send" onClick={handlePromptSend} disabled={aiLoading||!actPrompt.trim()}>{aiLoading?"…":"Ask ↗"}</button>
         </div>
 
         <div className="bf2-nav-row">
