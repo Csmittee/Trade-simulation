@@ -1,17 +1,16 @@
 /**
  * Dashboard.jsx
  * Phase 5 — Session persistence + KV operation optimization
+ * Phase 6b — 14-state workflow split (goldWorkflow + setWorkflow)
  *
- * Changes from Phase 4:
- * - autoExecute lifted here from StrategyPanel (was local state)
- * - All 9 strategy/workflow KV keys bundled into ONE key (settings:strategyBundle)
- *   → Load: 11 reads → 3 reads per session start
- *   → Write: 9 separate writes → 1 write per any strategy state change
- * - KV restore on load covers: activeStrategy, autoExecute, workflow, all stage state
- * - handleActivityEvent writes to D1 via /api/logs
- * - activityEvents loaded from D1 on mount (last 12 hrs)
- * - handleLoadMoreLogs: fetches 12 hrs further back per call
- * - Only Reset button clears everything — tab switch / Ctrl+R / browser swap safe
+ * KI011 (Phase 6c) — Per-symbol SET workflow dictionary
+ * - setWorkflows: { "PTT.BK": EMPTY_WORKFLOW, "SCB.BK": EMPTY_WORKFLOW, ... }
+ * - setOrderModes: { "PTT.BK": "manual", ... }
+ * - Helpers: getSetBundle(sym), setSetBundle(sym, patch)
+ * - SetMarket receives: setWorkflows (full dict), activeSetSymbol callback,
+ *   and per-symbol derived props for the currently selected symbol
+ * - Portfolio receives: setWorkflows dict (replaces single setBundle)
+ * - Worker handleAIStrategy: passes symbol so response carries it back
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -88,7 +87,7 @@ async function d1PostLog(event) {
           : new Date().toISOString(),
       }),
     });
-  } catch { /* silent — log lives in memory anyway */ }
+  } catch { /* silent */ }
 }
 
 async function d1GetLogs(before = null, limitHours = 12) {
@@ -184,6 +183,7 @@ const TABS = [
   { key: "portfolio", label: "Portfolio", icon: "💼" },
 ];
 
+// A blank workflow slice for one symbol
 const EMPTY_WORKFLOW = {
   workflow:          null,
   stageStatuses:     [],
@@ -199,10 +199,24 @@ const EMPTY_BUNDLE = {
   autoExecute:       false,
   strategyDuration:  null,
   goldOrderMode:     "manual",
-  setOrderMode:      "manual",
+  // KI011: setOrderModes dict replaces flat setOrderMode
+  setOrderModes:     {},
   gold:              { ...EMPTY_WORKFLOW },
-  set:               { ...EMPTY_WORKFLOW },
+  // KI011: set dict replaces single set object
+  setWorkflows:      {},
 };
+
+// ── Helpers: read/write a single symbol's slice from the dict ─────────────────
+function getSetBundle(setWorkflows, sym) {
+  return setWorkflows[sym] || { ...EMPTY_WORKFLOW };
+}
+
+function patchSetBundle(setWorkflows, sym, patch) {
+  return {
+    ...setWorkflows,
+    [sym]: { ...getSetBundle(setWorkflows, sym), ...patch },
+  };
+}
 
 export default function Dashboard() {
   const [portfolio,     setPortfolio]     = useState(null);
@@ -211,13 +225,12 @@ export default function Dashboard() {
   const [showReset,     setShowReset]     = useState(false);
   const [bootstrapped,  setBootstrapped]  = useState(false);
 
-  // ── Strategy state (lifted from StrategyPanel — Phase 5) ─────────────────
+  // ── Strategy state ────────────────────────────────────────────────────────
   const [activeStrategy,   setActiveStrategy]   = useState("off");
   const [autoExecute,      setAutoExecute]      = useState(false);
   const [strategyDuration, setStrategyDuration] = useState(null);
 
-  // ── AI workflow state — split per market (Fix A — Phase 6b) ─────────────
-  // Gold
+  // ── Gold workflow (unchanged) ─────────────────────────────────────────────
   const [goldWorkflow,          setGoldWorkflow]          = useState(null);
   const [goldStageStatuses,     setGoldStageStatuses]     = useState([]);
   const [goldActiveStageIdx,    setGoldActiveStageIdx]    = useState(0);
@@ -225,23 +238,19 @@ export default function Dashboard() {
   const [goldWorkflowDone,      setGoldWorkflowDone]      = useState(false);
   const [goldFallbackTriggered, setGoldFallbackTriggered] = useState(false);
   const [goldStagePnl,          setGoldStagePnl]          = useState([]);
+  const [goldOrderMode,         setGoldOrderMode]         = useState("manual");
 
-  // SET
-  const [setWorkflow,          setSetWorkflow]          = useState(null);
-  const [setStageStatuses,     setSetStageStatuses]     = useState([]);
-  const [setActiveStageIdx,    setSetActiveStageIdx]    = useState(0);
-  const [setConsecutiveRed,    setSetConsecutiveRed]    = useState(0);
-  const [setWorkflowDone,      setSetWorkflowDone]      = useState(false);
-  const [setFallbackTriggered, setSetFallbackTriggered] = useState(false);
-  const [setStagePnl,          setSetStagePnl]          = useState([]);
+  // ── KI011: SET workflow — per-symbol dict ────────────────────────────────
+  // setWorkflows: { "PTT.BK": EMPTY_WORKFLOW, "SCB.BK": EMPTY_WORKFLOW, ... }
+  const [setWorkflows,  setSetWorkflows]  = useState({});
+  // setOrderModes: { "PTT.BK": "manual", ... }
+  const [setOrderModes, setSetOrderModes] = useState({});
+  // Track which symbol SetMarket currently has selected (so we can derive props)
+  const [activeSetSymbol, setActiveSetSymbol] = useState("PTT.BK");
 
-  // Fix B — orderMode per market, lifted from market pages
-  const [goldOrderMode, setGoldOrderMode] = useState("manual");
-  const [setOrderMode,  setSetOrderMode]  = useState("manual");
-
-  // Derived active flags per market
+  // Derived: active symbol's workflow bundle
+  const activeSetBundle   = getSetBundle(setWorkflows, activeSetSymbol);
   const goldWorkflowActive = !!goldWorkflow && !goldWorkflowDone;
-  const setWorkflowActive  = !!setWorkflow  && !setWorkflowDone;
 
   // ── Activity log ──────────────────────────────────────────────────────────
   const [activityEvents, setActivityEvents] = useState([]);
@@ -249,10 +258,9 @@ export default function Dashboard() {
   const [logLoading,     setLogLoading]     = useState(false);
   const [logHasMore,     setLogHasMore]     = useState(true);
 
-  // Prevents persist effects from firing before bootstrap completes
   const bootstrappedRef = useRef(false);
 
-  // ── Load all state from KV on mount (3 reads total) ───────────────────────
+  // ── Load all state from KV on mount ──────────────────────────────────────
   useEffect(() => {
     async function load() {
       const [savedPortfolio, savedHours, savedBundle] = await Promise.all([
@@ -261,17 +269,14 @@ export default function Dashboard() {
         kvGetSetting(BUNDLE_KEY),
       ]);
 
-      // Portfolio
       if (savedPortfolio && (savedPortfolio.balance > 0 || savedPortfolio.startingBalance > 0)) {
         setPortfolio(savedPortfolio);
       }
 
-      // Market hours
       if (savedHours !== null) {
         setEnforceHours(savedHours === "true" || savedHours === true);
       }
 
-      // Strategy bundle (all fields in one JSON blob)
       if (savedBundle && savedBundle !== "null") {
         try {
           const b = JSON.parse(savedBundle);
@@ -279,29 +284,35 @@ export default function Dashboard() {
           if (b.autoExecute !== undefined)        setAutoExecute(Boolean(b.autoExecute));
           if (b.strategyDuration !== undefined)   setStrategyDuration(b.strategyDuration ?? null);
 
-          // Fix B — restore orderMode per market
+          // Gold orderMode
           if (b.goldOrderMode)  setGoldOrderMode(b.goldOrderMode);
-          if (b.setOrderMode)   setSetOrderMode(b.setOrderMode);
 
-          // Fix A — restore gold workflow bundle
+          // Gold workflow
           const g = b.gold || {};
-          if (g.workflow)                         setGoldWorkflow(g.workflow);
-          if (Array.isArray(g.stageStatuses))     setGoldStageStatuses(g.stageStatuses);
-          if (g.activeStageIdx !== undefined)     setGoldActiveStageIdx(Number(g.activeStageIdx) || 0);
-          if (g.consecutiveRed !== undefined)     setGoldConsecutiveRed(Number(g.consecutiveRed) || 0);
-          if (g.workflowDone !== undefined)       setGoldWorkflowDone(Boolean(g.workflowDone));
-          if (g.fallbackTriggered !== undefined)  setGoldFallbackTriggered(Boolean(g.fallbackTriggered));
-          if (Array.isArray(g.stagePnl))          setGoldStagePnl(g.stagePnl);
+          if (g.workflow)                        setGoldWorkflow(g.workflow);
+          if (Array.isArray(g.stageStatuses))    setGoldStageStatuses(g.stageStatuses);
+          if (g.activeStageIdx !== undefined)    setGoldActiveStageIdx(Number(g.activeStageIdx) || 0);
+          if (g.consecutiveRed !== undefined)    setGoldConsecutiveRed(Number(g.consecutiveRed) || 0);
+          if (g.workflowDone !== undefined)      setGoldWorkflowDone(Boolean(g.workflowDone));
+          if (g.fallbackTriggered !== undefined) setGoldFallbackTriggered(Boolean(g.fallbackTriggered));
+          if (Array.isArray(g.stagePnl))         setGoldStagePnl(g.stagePnl);
 
-          // Fix A — restore SET workflow bundle
-          const s = b.set || {};
-          if (s.workflow)                         setSetWorkflow(s.workflow);
-          if (Array.isArray(s.stageStatuses))     setSetStageStatuses(s.stageStatuses);
-          if (s.activeStageIdx !== undefined)     setSetActiveStageIdx(Number(s.activeStageIdx) || 0);
-          if (s.consecutiveRed !== undefined)     setSetConsecutiveRed(Number(s.consecutiveRed) || 0);
-          if (s.workflowDone !== undefined)       setSetWorkflowDone(Boolean(s.workflowDone));
-          if (s.fallbackTriggered !== undefined)  setSetFallbackTriggered(Boolean(s.fallbackTriggered));
-          if (Array.isArray(s.stagePnl))          setSetStagePnl(s.stagePnl);
+          // KI011: restore SET per-symbol dicts
+          // Support old KV shape (b.set = single bundle) gracefully
+          if (b.setWorkflows && typeof b.setWorkflows === "object") {
+            setSetWorkflows(b.setWorkflows);
+          } else if (b.set?.workflow) {
+            // Migrate old single-bundle to dict under PTT.BK as fallback
+            setSetWorkflows({ "PTT.BK": b.set });
+          }
+
+          if (b.setOrderModes && typeof b.setOrderModes === "object") {
+            setSetOrderModes(b.setOrderModes);
+          } else if (b.setOrderMode) {
+            // Migrate old flat setOrderMode → apply to PTT.BK
+            setSetOrderModes({ "PTT.BK": b.setOrderMode });
+          }
+
         } catch { /* malformed JSON — start fresh */ }
       }
 
@@ -345,15 +356,13 @@ export default function Dashboard() {
   }, [enforceHours]);
 
   // ── Persist all strategy state as ONE KV write ────────────────────────────
-  // Any change to any strategy field → single KV write
   useEffect(() => {
     if (!bootstrappedRef.current) return;
     kvSetSetting(BUNDLE_KEY, JSON.stringify({
-      activeStrategy:    activeStrategy || "off",
+      activeStrategy:   activeStrategy || "off",
       autoExecute,
-      strategyDuration:  strategyDuration ?? null,
+      strategyDuration: strategyDuration ?? null,
       goldOrderMode,
-      setOrderMode,
       gold: {
         workflow:          goldWorkflow || null,
         stageStatuses:     goldStageStatuses,
@@ -363,22 +372,15 @@ export default function Dashboard() {
         fallbackTriggered: goldFallbackTriggered,
         stagePnl:          goldStagePnl,
       },
-      set: {
-        workflow:          setWorkflow || null,
-        stageStatuses:     setStageStatuses,
-        activeStageIdx:    setActiveStageIdx,
-        consecutiveRed:    setConsecutiveRed,
-        workflowDone:      setWorkflowDone,
-        fallbackTriggered: setFallbackTriggered,
-        stagePnl:          setStagePnl,
-      },
+      // KI011: persist as dicts
+      setWorkflows,
+      setOrderModes,
     }));
   }, [
-    activeStrategy, autoExecute, strategyDuration, goldOrderMode, setOrderMode,
+    activeStrategy, autoExecute, strategyDuration, goldOrderMode,
     goldWorkflow, goldStageStatuses, goldActiveStageIdx, goldConsecutiveRed,
     goldWorkflowDone, goldFallbackTriggered, goldStagePnl,
-    setWorkflow, setStageStatuses, setActiveStageIdx, setConsecutiveRed,
-    setWorkflowDone, setFallbackTriggered, setStagePnl,
+    setWorkflows, setOrderModes,
   ]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -389,11 +391,10 @@ export default function Dashboard() {
   const handleReset = useCallback(async (newAmount) => {
     setPortfolio(resetPortfolio(newAmount));
     setShowReset(false);
-    // Clear all strategy state in memory
     setActiveStrategy("off");
     setAutoExecute(false);
     setStrategyDuration(null);
-    // Clear gold workflow
+    // Clear gold
     setGoldWorkflow(null);
     setGoldStageStatuses([]);
     setGoldActiveStageIdx(0);
@@ -401,28 +402,20 @@ export default function Dashboard() {
     setGoldWorkflowDone(false);
     setGoldFallbackTriggered(false);
     setGoldStagePnl([]);
-    // Clear SET workflow
-    setSetWorkflow(null);
-    setSetStageStatuses([]);
-    setSetActiveStageIdx(0);
-    setSetConsecutiveRed(0);
-    setSetWorkflowDone(false);
-    setSetFallbackTriggered(false);
-    setSetStagePnl([]);
-    // Reset orderMode
     setGoldOrderMode("manual");
-    setSetOrderMode("manual");
+    // Clear SET dicts
+    setSetWorkflows({});
+    setSetOrderModes({});
     setActivityEvents([]);
-    // Clear KV bundle in one write
     await kvSetSetting(BUNDLE_KEY, JSON.stringify(EMPTY_BUNDLE));
   }, []);
 
-  // AI strategy call (Worker → Anthropic)
-  const handleAIStrategy = useCallback(async ({ prompt, market, currentPrice, portfolio: summary }) => {
+  // AI strategy call — passes symbol so Worker can embed it in response
+  const handleAIStrategy = useCallback(async ({ prompt, market, symbol, currentPrice, portfolio: summary }) => {
     const res = await fetch(WORKER_BASE + config.workers.routes.strategy, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ prompt, market, currentPrice, portfolio: summary }),
+      body:    JSON.stringify({ prompt, market, symbol, currentPrice, portfolio: summary }),
     });
     if (!res.ok) throw new Error(`Strategy Worker returned ${res.status}`);
     const json = await res.json();
@@ -430,7 +423,7 @@ export default function Dashboard() {
     return json.data;
   }, []);
 
-  // Activity log — normalise, write to D1, append to memory
+  // Activity log
   const handleActivityEvent = useCallback((eventOrCmd) => {
     if (eventOrCmd === "__clear__gold") {
       setActivityEvents(prev => prev.filter(e => e.market !== "gold"));
@@ -445,7 +438,7 @@ export default function Dashboard() {
       ? eventOrCmd
       : makeActivityEvent(eventOrCmd);
 
-    d1PostLog(ev); // async, non-blocking
+    d1PostLog(ev);
 
     setActivityEvents(prev => {
       const next = [...prev, ev];
@@ -453,7 +446,6 @@ export default function Dashboard() {
     });
   }, []);
 
-  // Load more logs — 12 hrs further back per click
   const handleLoadMoreLogs = useCallback(async () => {
     if (logLoading || !logHasMore) return;
     setLogLoading(true);
@@ -474,13 +466,23 @@ export default function Dashboard() {
         time:     new Date(r.logged_at),
         fromD1:   true,
       }));
-      setActivityEvents(prev => [...events, ...prev]); // prepend older to top
+      setActivityEvents(prev => [...events, ...prev]);
       setLogOldestTs(older[older.length - 1]?.logged_at || null);
       setLogHasMore(older.length >= 50);
     } finally {
       setLogLoading(false);
     }
   }, [logLoading, logHasMore, logOldestTs]);
+
+  // ── KI011: per-symbol SET workflow setter helpers passed to SetMarket ─────
+  // SetMarket calls these with (sym, patch) to update one symbol's slice
+  const handleSetWorkflowPatch = useCallback((sym, patch) => {
+    setSetWorkflows(prev => patchSetBundle(prev, sym, patch));
+  }, []);
+
+  const handleSetOrderModeChange = useCallback((sym, mode) => {
+    setSetOrderModes(prev => ({ ...prev, [sym]: mode }));
+  }, []);
 
   // ── Loading / first-run states ────────────────────────────────────────────
   if (!bootstrapped) {
@@ -502,7 +504,7 @@ export default function Dashboard() {
   const setOpen       = isMarketOpen("set",  enforceHours);
   const goldOpen      = isMarketOpen("gold", enforceHours);
 
-  // Shared props that are identical for both markets
+  // Shared props identical for both markets
   const commonMarketProps = {
     portfolio,
     setPortfolio,
@@ -521,7 +523,7 @@ export default function Dashboard() {
     logHasMore,
   };
 
-  // Gold-specific workflow + orderMode props (Fix A + Fix B)
+  // Gold props — unchanged from Phase 6b
   const goldMarketProps = {
     ...commonMarketProps,
     orderMode:            goldOrderMode,
@@ -536,19 +538,17 @@ export default function Dashboard() {
     aiWorkflowActive:     goldWorkflowActive,
   };
 
-  // SET-specific workflow + orderMode props (Fix A + Fix B)
+  // KI011: SET props — pass full dicts + per-symbol helpers
+  // SetMarket derives the active symbol's slice internally
   const setMarketProps = {
     ...commonMarketProps,
-    orderMode:            setOrderMode,
-    onOrderModeChange:    setSetOrderMode,
-    workflow:             setWorkflow,           setWorkflow:          setSetWorkflow,
-    stageStatuses:        setStageStatuses,      setStageStatuses:     setSetStageStatuses,
-    activeStageIdx:       setActiveStageIdx,     setActiveStageIdx:    setSetActiveStageIdx,
-    consecutiveRed:       setConsecutiveRed,     setConsecutiveRed:    setSetConsecutiveRed,
-    workflowDone:         setWorkflowDone,       setWorkflowDone:      setSetWorkflowDone,
-    fallbackTriggered:    setFallbackTriggered,  setFallbackTriggered: setSetFallbackTriggered,
-    stagePnl:             setStagePnl,           setStagePnl:          setSetStagePnl,
-    aiWorkflowActive:     setWorkflowActive,
+    // Full dict — SetMarket reads/writes per symbol
+    setWorkflows,
+    onSetWorkflowPatch:   handleSetWorkflowPatch,
+    setOrderModes,
+    onSetOrderModeChange: handleSetOrderModeChange,
+    // Callback so Dashboard knows which symbol is selected (for Portfolio sync)
+    onActiveSetSymbolChange: setActiveSetSymbol,
   };
 
   return (
@@ -655,7 +655,7 @@ export default function Dashboard() {
       <main className="tab-content">
         {activeTab === "gold" && <GoldMarket {...goldMarketProps} />}
         {activeTab === "set"  && <SetMarket  {...setMarketProps} />}
-       {activeTab === "portfolio" && (
+        {activeTab === "portfolio" && (
           <Portfolio
             portfolio={portfolio}
             activeStrategy={activeStrategy}
@@ -667,13 +667,7 @@ export default function Dashboard() {
               workflowDone:      goldWorkflowDone,
               fallbackTriggered: goldFallbackTriggered,
             }}
-            setBundle={{
-              workflow:          setWorkflow,
-              stageStatuses:     setStageStatuses,
-              activeStageIdx:    setActiveStageIdx,
-              workflowDone:      setWorkflowDone,
-              fallbackTriggered: setFallbackTriggered,
-            }}
+            setWorkflows={setWorkflows}
             activityEvents={activityEvents}
             onTabSwitch={setActiveTab}
           />

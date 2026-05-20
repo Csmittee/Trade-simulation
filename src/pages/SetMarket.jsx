@@ -1,15 +1,16 @@
 /**
  * SetMarket.jsx
- * Phase 6 patch:
- * - strategyDuration / onStrategyDurationChange props wired (Fix 1 — L054)
- * - AI workflow state uses Dashboard props instead of OrderPanel local state (Fix 2)
- * - Fix 4 + Fix 6: Watchlist replaced with search input + tier filter (Top 50 / Top 100 / All SET)
- * - Fix 5: Removed duplicate section header in Closed positions tab
- * Phase 6 bottom panel redesign:
- * - Removed Open/Closed tab row — replaced with Active / All Session toggle
- * - All Session shows in-memory closedTrades (no D1 fetch)
- * - Sell desk collapsed by default, expands on click
- * - Activity log zone removed — replaced with single placeholder line
+ * Phase 6 patch — strategyDuration, AI workflow, search, tier filter
+ * Phase 6 bottom panel redesign
+ *
+ * KI011 (Phase 6c) — Per-symbol workflow independence
+ * - Props changed: no longer receives flat workflow/orderMode/aiWorkflowActive
+ * - Receives: setWorkflows (dict), onSetWorkflowPatch, setOrderModes, onSetOrderModeChange,
+ *             onActiveSetSymbolChange
+ * - On symbol change: calls onActiveSetSymbolChange(sym) → Dashboard tracks it
+ * - Derives per-symbol slice from dict for current activeSymbol
+ * - Passes derived slice props down to OrderPanel
+ * - aiWorkflowActive is ONLY true when the ACTIVE symbol has a live workflow
  */
 
 import { useState, useCallback, useMemo } from "react";
@@ -23,13 +24,10 @@ import { calcPortfolioSummary, calcHourlyPnL, executeSellQty } from "../core/por
 import { makeActivityEvent } from "../components/ActivityLog.jsx";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from "recharts";
 import config from "../../config.js";
-// Note: ActivityLog component no longer rendered in this file (placeholder replaces it)
 
 const WORKER = config.workers.base;
 
-// ── SET/MAI universe (Top 50, Top 100, and extended list) ────────────────────
-// Format: { ticker: string, name: string, tier: 1|2|3 }
-// tier 1 = Top 50 by market cap, tier 2 = Top 100, tier 3 = rest of SET/MAI
+// ── SET/MAI universe ──────────────────────────────────────────────────────────
 const SET_UNIVERSE = [
   // ── Top 50 ──────────────────────────────────────────────────────────────
   { t: "PTT.BK",     n: "PTT",                   tier: 1 },
@@ -78,65 +76,37 @@ const SET_UNIVERSE = [
   { t: "JMT.BK",     n: "JMT Network Services",     tier: 1 },
   { t: "TIDLOR.BK",  n: "Ngern Tid Lor",            tier: 1 },
   { t: "BJC.BK",     n: "Berli Jucker",             tier: 1 },
-  { t: "GLOBAL.BK",  n: "Siam Global House",        tier: 1 },
   { t: "STGT.BK",    n: "Sri Trang Gloves",         tier: 1 },
-  { t: "OSP.BK",     n: "Osotspa",                  tier: 1 },
-  { t: "SCGP.BK",    n: "SCG Packaging",            tier: 1 },
-  // ── Top 51–100 ──────────────────────────────────────────────────────────
-  { t: "BANPU.BK",   n: "Banpu",                    tier: 2 },
-  { t: "BCPG.BK",    n: "BCPG",                     tier: 2 },
-  { t: "BKD.BK",     n: "Bangkok Commercial",       tier: 2 },
-  { t: "CIMBT.BK",   n: "CIMB Thai",                tier: 2 },
-  { t: "COM7.BK",    n: "COM7",                      tier: 2 },
-  { t: "CRC.BK",     n: "Central Retail Corp",      tier: 2 },
-  { t: "DOHOME.BK",  n: "Dohome",                   tier: 2 },
-  { t: "EASON.BK",   n: "Eastern Water",            tier: 2 },
-  { t: "EGCO.BK",    n: "Electricity Generating",   tier: 2 },
-  { t: "EPG.BK",     n: "Eastern Polymer Group",    tier: 2 },
-  { t: "ERW.BK",     n: "ERW (Erawan Group)",       tier: 2 },
-  { t: "GFPT.BK",    n: "GFPT",                     tier: 2 },
-  { t: "GLOW.BK",    n: "GLOW Energy",              tier: 2 },
-  { t: "IMPACT.BK",  n: "Impact Growth REIT",       tier: 2 },
-  { t: "IRPC.BK",    n: "IRPC",                     tier: 2 },
-  { t: "ITD.BK",     n: "Italian-Thai Dev",         tier: 2 },
-  { t: "KAMART.BK",  n: "K-Art",                    tier: 2 },
-  { t: "LANNA.BK",   n: "Lanna Resources",          tier: 2 },
+  { t: "CBG.BK",     n: "Carabao Group",            tier: 1 },
+  { t: "ESSO.BK",    n: "Esso (Thailand)",           tier: 1 },
+  { t: "TQM.BK",     n: "TQM Alpha",                tier: 1 },
+  // ── Top 100 ─────────────────────────────────────────────────────────────
   { t: "MAJOR.BK",   n: "Major Cineplex",           tier: 2 },
-  { t: "PLANB.BK",   n: "Plan B Media",             tier: 2 },
-  { t: "PS.BK",      n: "Pruksa Holding",           tier: 2 },
-  { t: "PSH.BK",     n: "Pruksa Real Estate",       tier: 2 },
-  { t: "PTG.BK",     n: "PTG Energy",               tier: 2 },
-  { t: "ROBINS.BK",  n: "Robinson Lifestyle",       tier: 2 },
-  { t: "SAMART.BK",  n: "Samart Corp",              tier: 2 },
-  { t: "SCCC.BK",    n: "Siam City Cement",         tier: 2 },
-  { t: "SEAFCO.BK",  n: "Seafco",                   tier: 2 },
-  { t: "SF.BK",      n: "SF Corporation",           tier: 2 },
+  { t: "CRC.BK",     n: "Central Retail Corp",      tier: 2 },
+  { t: "CPAXT.BK",   n: "CP Axtra",                 tier: 2 },
+  { t: "ANAN.BK",    n: "Ananda Dev",               tier: 2 },
+  { t: "SIRI.BK",    n: "Sansiri",                  tier: 2 },
+  { t: "ERW.BK",     n: "Erawan Group",             tier: 2 },
   { t: "SINGER.BK",  n: "Singer Thailand",          tier: 2 },
-  { t: "SMPC.BK",    n: "Seamico Securities",       tier: 2 },
-  { t: "SNP.BK",     n: "S&P Syndicate",            tier: 2 },
-  { t: "SPAL.BK",    n: "Standard Industries",      tier: 2 },
-  { t: "SPW.BK",     n: "Sahaviriya Steel",         tier: 2 },
-  { t: "STA.BK",     n: "Sri Trang Agro",           tier: 2 },
-  { t: "STEC.BK",    n: "Sino-Thai Engineering",    tier: 2 },
-  { t: "SUSCO.BK",   n: "Susco",                    tier: 2 },
-  { t: "SYNTEC.BK",  n: "Syntec Construction",      tier: 2 },
-  { t: "TASCO.BK",   n: "Tipco Asphalt",            tier: 2 },
-  { t: "TCAP.BK",    n: "Thanachart Capital",       tier: 2 },
-  { t: "THAI.BK",    n: "Thai Airways",             tier: 2 },
-  { t: "THAIBEV.BK", n: "Thai Beverage",            tier: 2 },
-  { t: "THANI.BK",   n: "Ratchthani Leasing",       tier: 2 },
-  { t: "TMT.BK",     n: "Thai Metal Trade",         tier: 2 },
-  { t: "TOG.BK",     n: "Thai Optical Group",       tier: 2 },
-  { t: "TPIPL.BK",   n: "TPI Polene",               tier: 2 },
-  { t: "TQM.BK",     n: "TQM Corp",                 tier: 2 },
-  { t: "TSTE.BK",    n: "Thai Steel Cable",         tier: 2 },
-  { t: "TTA.BK",     n: "Thoresen Thai",            tier: 2 },
-  { t: "TWZ.BK",     n: "TWZ Corp",                 tier: 2 },
-  { t: "TWPC.BK",    n: "Thai Wah",                 tier: 2 },
-  // ── Extended SET/MAI (tier 3) ───────────────────────────────────────────
-  { t: "ACAP.BK",    n: "Asia Capital Group",       tier: 3 },
-  { t: "ACE.BK",     n: "ACE (Alt. Current Energy)",tier: 3 },
-  { t: "AEONTS.BK",  n: "AEON Thana Sinsap",        tier: 3 },
+  { t: "GFPT.BK",    n: "GFPT",                     tier: 2 },
+  { t: "SABUY.BK",   n: "Sabuy Technology",         tier: 2 },
+  { t: "WARRIX.BK",  n: "Warrix",                   tier: 2 },
+  { t: "NOBLE.BK",   n: "Noble Development",        tier: 2 },
+  { t: "NVD.BK",     n: "NV Digital",               tier: 2 },
+  { t: "ORI.BK",     n: "Origin Property",          tier: 2 },
+  { t: "PLANB.BK",   n: "Plan B Media",             tier: 2 },
+  { t: "PSL.BK",     n: "Precious Shipping",        tier: 2 },
+  { t: "RBF.BK",     n: "Royal Benja Hotel",        tier: 2 },
+  { t: "RS.BK",      n: "RS",                       tier: 2 },
+  { t: "SAT.BK",     n: "Somboon Advance Tech",     tier: 2 },
+  { t: "SC.BK",      n: "SC Asset Corp",            tier: 2 },
+  { t: "SCGP.BK",    n: "SCG Packaging",            tier: 2 },
+  { t: "SHR.BK",     n: "S Hotels and Resorts",     tier: 2 },
+  { t: "SKY.BK",     n: "Sky Thai Airways",         tier: 2 },
+  { t: "SPALI.BK",   n: "Supalai",                  tier: 2 },
+  { t: "SSP.BK",     n: "Solar Power Solutions",    tier: 2 },
+  { t: "ESSO.BK",    n: "ExxonMobil Thailand",      tier: 2 },
+  // ── Extended ─────────────────────────────────────────────────────────────
   { t: "AIRA.BK",    n: "AIRA Capital",             tier: 3 },
   { t: "AKP.BK",     n: "Akkhapat Group",           tier: 3 },
   { t: "ALLA.BK",    n: "All Seasons Property",     tier: 3 },
@@ -153,21 +123,17 @@ const SET_UNIVERSE = [
   { t: "BCP.BK",     n: "Bangchak Corp",            tier: 3 },
   { t: "BEAUTY.BK",  n: "Beauty Community",         tier: 3 },
   { t: "BIG.BK",     n: "Big Camera Corp",          tier: 3 },
-  { t: "BJC.BK",     n: "Berli Jucker",             tier: 3 },
   { t: "BLA.BK",     n: "Bangkok Life",             tier: 3 },
   { t: "BLAND.BK",   n: "Bangkok Land",             tier: 3 },
-  { t: "BOL.BK",     n: "Berli Jucker (BOL)",       tier: 3 },
   { t: "BR.BK",      n: "Bangkok Ranch",            tier: 3 },
   { t: "BRR.BK",     n: "Bangkok Rubber",           tier: 3 },
   { t: "BROOK.BK",   n: "Brooker Group",            tier: 3 },
   { t: "CCET.BK",    n: "CC&E Textile",             tier: 3 },
   { t: "CEN.BK",     n: "Central Retail (CEN)",     tier: 3 },
   { t: "CFRESH.BK",  n: "Cfresh Industry",          tier: 3 },
-  { t: "CHATCHAI.BK",n: "Chatchai Charoenwong",     tier: 3 },
   { t: "CHG.BK",     n: "Chularat Hospital",        tier: 3 },
   { t: "CMAN.BK",    n: "Chemical Management",      tier: 3 },
   { t: "CMO.BK",     n: "CMO",                      tier: 3 },
-  { t: "CNT.BK",     n: "Central Nichi Thai",       tier: 3 },
   { t: "COLOR.BK",   n: "Color Image Apparel",      tier: 3 },
   { t: "CRANE.BK",   n: "Crane Heavy Industry",     tier: 3 },
   { t: "CSL.BK",     n: "Country Steel",            tier: 3 },
@@ -182,7 +148,6 @@ const SET_UNIVERSE = [
   { t: "EC.BK",      n: "Eurocraft",                tier: 3 },
   { t: "EE.BK",      n: "Eastern Electrics",        tier: 3 },
   { t: "EKH.BK",     n: "Ekachai Med Care",         tier: 3 },
-  { t: "ESSO.BK",    n: "ExxonMobil Thailand",      tier: 3 },
   { t: "ETE.BK",     n: "Eastern Tech",             tier: 3 },
   { t: "ETRON.BK",   n: "Etron",                    tier: 3 },
 ];
@@ -192,9 +157,8 @@ const TIER_LABELS = { all: "All SET/MAI", "1": "Top 50", "2": "Top 100" };
 
 function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
   const [query, setQuery]   = useState("");
-  const [tier,  setTier]    = useState("1");   // "1" | "2" | "all"
+  const [tier,  setTier]    = useState("1");
 
-  // Filter by tier first, then by query
   const filtered = useMemo(() => {
     const tierNum = tier === "all" ? null : parseInt(tier);
     return SET_UNIVERSE.filter(s => {
@@ -202,7 +166,7 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
       if (!query.trim()) return true;
       const q = query.toLowerCase();
       return s.t.toLowerCase().includes(q) || s.n.toLowerCase().includes(q);
-    }).slice(0, 80); // max 80 rows to keep render fast
+    }).slice(0, 80);
   }, [query, tier]);
 
   return (
@@ -212,7 +176,6 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
         <TooltipIcon content="Search any SET or MAI listed stock by ticker or name. Filter by market cap tier for quick scalp targets." />
       </div>
 
-      {/* Tier selector */}
       <div className="wl-tier-row">
         {Object.entries(TIER_LABELS).map(([key, label]) => (
           <button
@@ -225,7 +188,6 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
         ))}
       </div>
 
-      {/* Search input */}
       <div className="wl-search-row">
         <input
           type="text"
@@ -239,7 +201,6 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
         )}
       </div>
 
-      {/* Results */}
       <div className="watchlist-list">
         {filtered.length === 0 ? (
           <div className="wl-empty">No results for "{query}"</div>
@@ -278,8 +239,7 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
       <div className="set-market-info">
         <div className="info-item">⏰ Session 1: 10:00–12:30 ICT</div>
         <div className="info-item">⏰ Session 2: 14:30–17:00 ICT</div>
-        <div className="info-item">📦 Min lot: 100 shares</div>
-        <div className="info-item">💸 Commission: 0.157% + VAT</div>
+        <div className="info-item">📅 Mon–Fri only</div>
       </div>
     </div>
   );
@@ -297,15 +257,15 @@ async function logTradeToD1(trade) {
   }
 }
 
-async function fetchClosedFromD1(market) {
-  try {
-    const res  = await fetch(`${WORKER}/api/trades?market=${market}&limit=50`);
-    const json = await res.json();
-    return json.success ? json.data : [];
-  } catch { return []; }
+// ── Helper: extract one symbol's bundle from the dict ─────────────────────────
+function getBundleForSym(setWorkflows, sym) {
+  return setWorkflows?.[sym] || {
+    workflow: null, stageStatuses: [], activeStageIdx: 0,
+    consecutiveRed: 0, workflowDone: false, fallbackTriggered: false, stagePnl: [],
+  };
 }
 
-
+// ── Main Component ────────────────────────────────────────────────────────────
 export default function SetMarket({
   portfolio,
   setPortfolio,
@@ -322,25 +282,19 @@ export default function SetMarket({
   onLoadMoreLogs,
   logLoading,
   logHasMore,
-  orderMode, onOrderModeChange,
-  workflow, setWorkflow,
-  stageStatuses, setStageStatuses,
-  activeStageIdx, setActiveStageIdx,
-  consecutiveRed, setConsecutiveRed,
-  workflowDone, setWorkflowDone,
-  fallbackTriggered, setFallbackTriggered,
-  stagePnl, setStagePnl,
-  aiWorkflowActive,
+  // KI011: new dict-based props (replace flat workflow/orderMode props)
+  setWorkflows,
+  onSetWorkflowPatch,
+  setOrderModes,
+  onSetOrderModeChange,
+  onActiveSetSymbolChange,
 }) {
   const [activeSymbol,    setActiveSymbol]    = useState(SET_UNIVERSE[0].t);
   const [timeframe,       setTimeframe]       = useState("1D");
   const [panel3Collapsed, setPanel3Collapsed] = useState(false);
   const [sellQty,         setSellQty]         = useState("");
-
-  // ── Positions view toggle (Active = open only | All Session = open + in-memory closed)
-  const [posView,      setPosView]      = useState("active"); // "active" | "all"
-  // ── Sell desk collapsed by default ───────────────────────────────────────────
-  const [sellDeskOpen, setSellDeskOpen] = useState(false);
+  const [posView,         setPosView]         = useState("active");
+  const [sellDeskOpen,    setSellDeskOpen]    = useState(false);
 
   const {
     watchlistData, activeQuote, priceHistory, historyLoading,
@@ -354,10 +308,10 @@ export default function SetMarket({
   const setPositions = positions.filter(p => p.market === "set");
   const currentPrice = activeQuote?.price || null;
 
-  // ── All Session: 12-hour D1 fetch (refresh-safe, sleep-safe) ────────────────
-  const [sessionClosed,    setSessionClosed]    = useState([]);
-  const [sessionLoading,   setSessionLoading]   = useState(false);
-  const [sessionLoaded,    setSessionLoaded]    = useState(false);
+  // All Session D1 fetch
+  const [sessionClosed,  setSessionClosed]  = useState([]);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionLoaded,  setSessionLoaded]  = useState(false);
 
   async function loadSessionClosed() {
     if (sessionLoading) return;
@@ -376,9 +330,27 @@ export default function SetMarket({
 
   const fetchIntel = useFetchIntel();
 
+  // KI011: derive active symbol's slice from the dicts
+  const symBundle   = getBundleForSym(setWorkflows, activeSymbol);
+  const symOrderMode = setOrderModes?.[activeSymbol] || "manual";
+  // Only lock if THIS symbol has an active workflow
+  const symWorkflowActive = !!symBundle.workflow && !symBundle.workflowDone;
+
+  // Setters that patch only the active symbol's slice
+  const setSymWorkflow          = useCallback(v => onSetWorkflowPatch(activeSymbol, { workflow: typeof v === "function" ? v(symBundle.workflow) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.workflow]);
+  const setSymStageStatuses     = useCallback(v => onSetWorkflowPatch(activeSymbol, { stageStatuses: typeof v === "function" ? v(symBundle.stageStatuses) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.stageStatuses]);
+  const setSymActiveStageIdx    = useCallback(v => onSetWorkflowPatch(activeSymbol, { activeStageIdx: typeof v === "function" ? v(symBundle.activeStageIdx) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.activeStageIdx]);
+  const setSymConsecutiveRed    = useCallback(v => onSetWorkflowPatch(activeSymbol, { consecutiveRed: typeof v === "function" ? v(symBundle.consecutiveRed) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.consecutiveRed]);
+  const setSymWorkflowDone      = useCallback(v => onSetWorkflowPatch(activeSymbol, { workflowDone: typeof v === "function" ? v(symBundle.workflowDone) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.workflowDone]);
+  const setSymFallbackTriggered = useCallback(v => onSetWorkflowPatch(activeSymbol, { fallbackTriggered: typeof v === "function" ? v(symBundle.fallbackTriggered) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.fallbackTriggered]);
+  const setSymStagePnl          = useCallback(v => onSetWorkflowPatch(activeSymbol, { stagePnl: typeof v === "function" ? v(symBundle.stagePnl) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.stagePnl]);
+  const setSymOrderMode         = useCallback(mode => onSetOrderModeChange(activeSymbol, mode), [activeSymbol, onSetOrderModeChange]);
+
+  // KI011: on symbol change — notify Dashboard, reset timeframe
   const handleSymbolChange = (sym) => {
     setActiveSymbol(sym);
     setTimeframe("1D");
+    onActiveSetSymbolChange?.(sym);
   };
 
   function pushEvent(params) {
@@ -488,7 +460,7 @@ export default function SetMarket({
       {/* ── Main Body ── */}
       <div className="market-body">
 
-        {/* Watchlist — search + tier filter (Fix 4 + Fix 6) */}
+        {/* Watchlist */}
         <div className="panel-watchlist">
           <WatchlistPanel
             activeSymbol={activeSymbol}
@@ -542,7 +514,7 @@ export default function SetMarket({
             </div>
           </div>
 
-          {/* Panel Bottom — positions only */}
+          {/* Panel Bottom */}
           <div className={`panel-bottom ${panel3Collapsed ? "collapsed" : ""}`}>
             <div className="panel3-header">
               <span className="panel3-title">
@@ -552,7 +524,6 @@ export default function SetMarket({
                 )}
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {/* Active / All Session toggle */}
                 <div className="pos-view-toggle">
                   <button
                     className={`pos-view-btn ${posView === "active" ? "active" : ""}`}
@@ -572,7 +543,7 @@ export default function SetMarket({
             {!panel3Collapsed && (
               <div className="panel-bottom-body panel-bottom-body--single">
 
-                {/* ── Unified scrollable positions zone ── */}
+                {/* Scrollable positions zone */}
                 <div className="panel-bottom-zone positions-zone pz-unified">
                   {(() => {
                     const openRows   = setPositions.map(pos => ({ ...pos, _rowType: "open" }));
@@ -593,7 +564,6 @@ export default function SetMarket({
                     }
                     return (
                       <div className="positions-table positions-table--12col">
-                        {/* 12-column header: Time | Side | Symbol | Qty | Entry | Price | P&L | P&L% | Stop | Target | Strategy | Status */}
                         <div className="pos-row pos-row--12col header">
                           <span>Time</span><span>Side</span><span>Symbol</span><span>Qty</span>
                           <span>Entry</span><span>Price</span><span>P&L</span><span>P&L%</span>
@@ -620,7 +590,6 @@ export default function SetMarket({
                               </div>
                             );
                           } else {
-                            // D1 closed row — snake_case fields
                             const pnlUp = (row.pnl ?? 0) >= 0;
                             const closeTime = row.closed_at ? new Date(row.closed_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
                             return (
@@ -634,9 +603,7 @@ export default function SetMarket({
                                 <span className={pnlUp?"pnl-up":"pnl-down"}>
                                   {row.pnl != null ? `${pnlUp?"+":""}฿${Math.round(row.pnl)?.toLocaleString()}` : "—"}
                                 </span>
-                                <span>—</span>
-                                <span>—</span>
-                                <span>—</span>
+                                <span>—</span><span>—</span><span>—</span>
                                 <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
                                 <span className="pos-status pos-status--closed">CLOSED</span>
                               </div>
@@ -648,7 +615,7 @@ export default function SetMarket({
                   })()}
                 </div>
 
-                {/* ── Sell Desk — always pinned below scroll zone, never inside it ── */}
+                {/* Sell Desk — pinned, never inside scroll zone */}
                 {(() => {
                   const symPos    = setPositions.filter(p => p.symbol === activeSymbol);
                   const totalHeld = symPos.reduce((s, p) => s + p.qty, 0);
@@ -717,7 +684,7 @@ export default function SetMarket({
                   );
                 })()}
 
-                {/* ── Activity log placeholder ── */}
+                {/* Activity log placeholder */}
                 <div className="activity-log-placeholder">
                   📋 Activity log available in D1 Panel (coming soon)
                 </div>
@@ -729,6 +696,7 @@ export default function SetMarket({
 
         {/* Right column */}
         <div className="panel-controls">
+          {/* KI011: pass derived per-symbol props to OrderPanel */}
           <OrderPanel
             market="set"
             currentPrice={currentPrice}
@@ -738,22 +706,23 @@ export default function SetMarket({
             marketOpen={marketOpen}
             enforceHours={enforceHours}
             onAIStrategy={onAIStrategy}
-            orderMode={orderMode}
-            onOrderModeChange={onOrderModeChange}
+            orderMode={symOrderMode}
+            onOrderModeChange={setSymOrderMode}
             recentCloses={priceHistory.slice(-10).map(c => c.close).filter(Boolean)}
             selectedSymbol={activeSymbol}
             onLogActivity={onActivityEvent}
-            aiWorkflowActive={aiWorkflowActive}
-            workflow={workflow} setWorkflow={setWorkflow}
-            stageStatuses={stageStatuses} setStageStatuses={setStageStatuses}
-            activeStageIdx={activeStageIdx} setActiveStageIdx={setActiveStageIdx}
-            consecutiveRed={consecutiveRed} setConsecutiveRed={setConsecutiveRed}
-            workflowDone={workflowDone} setWorkflowDone={setWorkflowDone}
-            fallbackTriggered={fallbackTriggered} setFallbackTriggered={setFallbackTriggered}
-            stagePnl={stagePnl} setStagePnl={setStagePnl}
+            aiWorkflowActive={symWorkflowActive}
+            workflowSymbol={symBundle.workflow?.symbol || null}
+            workflow={symBundle.workflow}          setWorkflow={setSymWorkflow}
+            stageStatuses={symBundle.stageStatuses} setStageStatuses={setSymStageStatuses}
+            activeStageIdx={symBundle.activeStageIdx} setActiveStageIdx={setSymActiveStageIdx}
+            consecutiveRed={symBundle.consecutiveRed} setConsecutiveRed={setSymConsecutiveRed}
+            workflowDone={symBundle.workflowDone}   setWorkflowDone={setSymWorkflowDone}
+            fallbackTriggered={symBundle.fallbackTriggered} setFallbackTriggered={setSymFallbackTriggered}
+            stagePnl={symBundle.stagePnl}           setStagePnl={setSymStagePnl}
           />
 
-          {orderMode === "manual" && (
+          {symOrderMode === "manual" && (
             <StrategyPanel
               market="set"
               symbol={activeSymbol}
@@ -769,7 +738,7 @@ export default function SetMarket({
               onExecuteBuy={handleStrategyBuy}
               onExecuteSell={handleStrategySell}
               onStrategyEvent={handleStrategyEvent}
-              aiWorkflowActive={aiWorkflowActive}
+              aiWorkflowActive={symWorkflowActive}
             />
           )}
         </div>
