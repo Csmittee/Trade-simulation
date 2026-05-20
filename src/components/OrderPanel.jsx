@@ -70,8 +70,7 @@ export default function OrderPanel({
   const [aiLoading, setAiLoading]         = useState(false);
   const [aiError, setAiError]             = useState(null);
   const [chatCollapsed, setChatCollapsed] = useState(false);
-  // Fix C — track whether Execute was clicked per stage before showing outcome buttons
-  const [stageExecuted, setStageExecuted] = useState([]);
+  const [stageExecuted, setStageExecuted] = useState([]); // Fix C: track per-stage execution
   // workflow, stageStatuses, etc. are now PROPS from Dashboard (Fix 2 — Phase 6)
   const workflowRef = useRef(null);
 
@@ -173,6 +172,7 @@ export default function OrderPanel({
     setAiLoading(true); setAiError(null); setWorkflow(null);
     setStageStatuses([]); setActiveStageIdx(0); setConsecutiveRed(0);
     setWorkflowDone(false); setFallbackTriggered(false); setStagePnl([]);
+    setStageExecuted([]);
 
     try {
       const res = await fetch(`${WORKER_BASE}/api/strategy`, {
@@ -195,7 +195,7 @@ export default function OrderPanel({
       setWorkflow(wf);
       setStageStatuses(wf.stages.map((_, i) => (i === 0 ? STATUS.ACTIVE : STATUS.PENDING)));
       setStagePnl(wf.stages.map(() => null));
-      setStageExecuted(wf.stages.map(() => false)); // Fix C — all stages start un-executed
+      setStageExecuted(wf.stages.map(() => false));
       setChatCollapsed(true);
       onLogActivity?.({ type: "info", market, message: `✦ AI Workflow built: "${wf.workflowName}" — ${wf.stages.length} stages` });
     } catch (err) {
@@ -209,7 +209,7 @@ export default function OrderPanel({
     setWorkflow(null); setAiPrompt(""); setAiError(null);
     setStageStatuses([]); setActiveStageIdx(0); setConsecutiveRed(0);
     setWorkflowDone(false); setFallbackTriggered(false); setStagePnl([]);
-    setStageExecuted([]); // Fix C
+    setStageExecuted([]);
     setChatCollapsed(false);
   }
 
@@ -253,6 +253,10 @@ export default function OrderPanel({
 
     const sym = market === "gold" ? "THAI_GOLD_BAHT" : (selectedSymbol || "");
 
+    const markExecuted = () => setStageExecuted(prev => {
+      const next = [...prev]; next[stageIdx] = true; return next;
+    });
+
     if (stage.action === "BUY" || stage.action === "SCALE IN") {
       const entryPrice   = workflow.suggestedEntry || currentPrice;
       const suggestedQty = market === "gold" ? 1 : 100;
@@ -265,38 +269,46 @@ export default function OrderPanel({
         strategy:   workflow.workflowName,
         simMode,
       });
-      if (result?.error) { setAiError(`Trade rejected: ${result.error}`); return; }
+      if (result?.error) {
+        // Show error prominently — then still mark executed so outcome buttons
+        // appear and user can record Win/Loss/Skip manually (e.g. insufficient balance)
+        setAiError(`⚠ ${result.error} — mark outcome manually below`);
+        markExecuted();
+        return;
+      }
+      setAiError(null);
       onLogActivity?.({ type: "buy", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} executed at ฿${entryPrice?.toLocaleString()}` });
+      markExecuted();
 
     } else if (stage.action === "SELL" || stage.action === "EXIT") {
-      // Use FIFO executeSellQty — sell ALL held units of this symbol
-      // (L325 rule: always executeSellQty for user-facing sells, never executeSell directly)
+      // L325: always use executeSellQty for user-facing sells — never executeSell(null)
       const closePrice = workflow.suggestedTP || currentPrice;
-      const openLots   = portfolio.positions.filter(p => p.market === market && p.symbol === sym);
+      const openLots   = (portfolio.positions || []).filter(p => p.market === market && p.symbol === sym);
       const totalQty   = openLots.reduce((s, p) => s + p.qty, 0);
 
       if (totalQty === 0) {
-        // No positions open — still mark executed so user can record outcome
-        setAiError(null);
-        onLogActivity?.({ type: "info", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} — no open positions to close` });
-      } else {
-        const result = executeSellQty(portfolio, market, sym, totalQty, closePrice);
-        if (result?.error) { setAiError(`Trade rejected: ${result.error}`); return; }
-        setPortfolio(result.portfolio);
-        onLogActivity?.({ type: "sell", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} — sold ${totalQty} @ ฿${closePrice?.toLocaleString()}` });
+        // No open positions — log it, still let user mark outcome
+        setAiError("⚠ No open positions to close — mark outcome manually below");
+        markExecuted();
+        return;
       }
+      const result = executeSellQty(portfolio, market, sym, totalQty, closePrice);
+      if (result?.error) {
+        setAiError(`⚠ ${result.error} — mark outcome manually below`);
+        markExecuted();
+        return;
+      }
+      setPortfolio(result.portfolio);
+      setAiError(null);
+      onLogActivity?.({ type: "sell", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: ${stage.action} — sold ${totalQty} @ ฿${closePrice?.toLocaleString()}` });
+      markExecuted();
 
     } else {
       // HOLD — no trade needed
+      setAiError(null);
       onLogActivity?.({ type: "info", market, message: `✦ [${workflow.workflowName}] Stage ${stageIdx + 1}: HOLD — no trade placed` });
+      markExecuted();
     }
-
-    // Mark stage executed — outcome buttons now appear
-    setStageExecuted(prev => {
-      const next = [...prev];
-      next[stageIdx] = true;
-      return next;
-    });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -509,7 +521,7 @@ export default function OrderPanel({
                           {/* Action buttons — only for active stage */}
                           {isActive && !workflowDone && (
                             <div className="wf-stage-actions">
-                              {/* Execute button — only show if not yet executed */}
+                              {/* Execute button — hidden after execution */}
                               {stage.action !== "HOLD" && !stageExecuted[idx] && (
                                 <button
                                   className="wf-exec-btn"
@@ -519,13 +531,18 @@ export default function OrderPanel({
                                   ▶ {stage.action === "BUY" || stage.action === "SCALE IN" ? "Execute Buy" : "Execute Sell/Exit"}
                                 </button>
                               )}
-                              {stage.action === "HOLD" && !stageExecuted[idx] && (
+                              {stage.action === "HOLD" && (
                                 <div className="wf-hold-note">◈ HOLD — no trade needed this stage</div>
                               )}
 
-                              {/* Outcome buttons — only appear after Execute clicked (or HOLD) */}
+                              {/* Outcome buttons — appear after execute (or immediately for HOLD) */}
                               {(stageExecuted[idx] || stage.action === "HOLD") && (
-                                <div className="wf-outcome-row">
+                                <>
+                                  {/* Error shown here — visible even after execute button disappears */}
+                                  {aiError && (
+                                    <div className="wf-exec-error">{aiError}</div>
+                                  )}
+                                  <div className="wf-outcome-row">
                                   <span className="wf-outcome-label">Mark result:</span>
                                   <button
                                     className="wf-outcome-btn win"
@@ -543,6 +560,7 @@ export default function OrderPanel({
                                     title="Skip this stage"
                                   >— Skip</button>
                                 </div>
+                                </>
                               )}
                             </div>
                           )}
