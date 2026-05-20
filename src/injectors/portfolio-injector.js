@@ -1,14 +1,14 @@
 /**
  * portfolio-injector.js
- * Phase 6 — Battlefield data layer (v4)
+ * Phase 6 — Battlefield data layer (v5)
  *
- * Key changes from v3:
- * - computeUniqueLanes now accepts BOTH market workflow bundles separately
- *   (goldBundle, setBundle) and picks the right one per lane.market
- * - strategyDuration is now used: plan status checks if strategy is
- *   still within its active time window (openedAt + duration > now)
- * - Expired strategy = "late" regardless of P&L
- * - AI workflow stage detail now shows stage label + time window from the stage itself
+ * Changes from v4:
+ * - parseLastStageEndDate(): parses stage.timeWindow strings into a JS Date
+ *   Handles: "May 21-22, 2026", "May 29-30, 2026", "13:00-18:00 today", etc.
+ * - computeUniqueLanes(): adds lane.ownScaleProgress and lane.ownScaleEndDate
+ *   Own scale: 0 = position open date, 1 = last stage end date
+ *   Falls back to session progress if no parseable date found.
+ * - computeOwnScaleRuler(): returns evenly spaced date labels for the ruler
  */
 
 import config from "../../config.js";
@@ -20,7 +20,6 @@ const WORKER_STRAT  = WORKER_BASE + config.workers.routes.strategy;
 export const DAILY_GOAL = 500;
 
 // ── Strategy duration defaults (ms) ──────────────────────────────────────────
-// Matches the duration options in StrategyPanel
 const DURATION_MS = {
   "30m":  30 * 60 * 1000,
   "1h":    1 * 60 * 60 * 1000,
@@ -35,21 +34,128 @@ function parseDurationMs(duration) {
   return DURATION_MS[duration] || null;
 }
 
+// ── Parse last stage end date from timeWindow string ─────────────────────────
+
+/**
+ * Attempts to extract the END date from a stage.timeWindow string.
+ *
+ * Handles patterns:
+ *   "May 21-22, 2026"        → May 22 2026
+ *   "May 29-30, 2026"        → May 30 2026
+ *   "May 21, 2026"           → May 21 2026
+ *   "13:00-18:00 today"      → today's date (intraday — use session end)
+ *   "13:00–18:00"            → today's date
+ *   "Next 6 hours (7:00-13:00)" → today's date
+ *
+ * Returns a Date or null if unparseable.
+ */
+export function parseLastStageEndDate(timeWindow) {
+  if (!timeWindow || typeof timeWindow !== "string") return null;
+  const tw = timeWindow.trim();
+
+  // Pattern 1: "Month DD-DD, YYYY" — range, take the second day
+  // e.g. "May 21-22, 2026" → "May 22, 2026"
+  const rangeMatch = tw.match(
+    /([A-Za-z]+)\s+(\d{1,2})-(\d{1,2}),?\s*(\d{4})/
+  );
+  if (rangeMatch) {
+    const [, month, , endDay, year] = rangeMatch;
+    const d = new Date(`${month} ${endDay}, ${year}`);
+    if (!isNaN(d)) return d;
+  }
+
+  // Pattern 2: "Month DD, YYYY" — single day
+  const singleMatch = tw.match(/([A-Za-z]+)\s+(\d{1,2}),?\s*(\d{4})/);
+  if (singleMatch) {
+    const d = new Date(singleMatch[0]);
+    if (!isNaN(d)) return d;
+  }
+
+  // Pattern 3: intraday / "today" / time-only → return end of today (17:00 ICT = 10:00 UTC)
+  if (/today|tonight|\d{1,2}:\d{2}/i.test(tw)) {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0));
+  }
+
+  return null;
+}
+
+/**
+ * Given a workflow object, find the end date of its LAST stage.
+ * Returns a Date or null.
+ */
+export function getWorkflowEndDate(workflow) {
+  if (!workflow?.stages?.length) return null;
+  // Try stages in reverse order — find the last parseable date
+  const reversed = [...workflow.stages].reverse();
+  for (const stage of reversed) {
+    const d = parseLastStageEndDate(stage.timeWindow);
+    if (d) return d;
+  }
+  return null;
+}
+
+/**
+ * Compute own-scale progress for a lane:
+ * 0 = position open date, 1 = last stage end date
+ */
+function getOwnScaleProgress(lane, workflowEndDate, durationMs) {
+  const now = Date.now();
+  const openMs = lane.oldestOpenedAt
+    ? new Date(lane.oldestOpenedAt).getTime()
+    : now;
+
+  // If we have a workflow end date, use it
+  if (workflowEndDate) {
+    const endMs  = workflowEndDate.getTime();
+    const spanMs = endMs - openMs;
+    if (spanMs <= 0) return 1;
+    return Math.min(1, Math.max(0, (now - openMs) / spanMs));
+  }
+
+  // Fall back to strategyDuration
+  if (durationMs) {
+    return Math.min(1, Math.max(0, (now - openMs) / durationMs));
+  }
+
+  // Fall back to session progress
+  return getSessionProgress(lane.market);
+}
+
+/**
+ * Generate 5 evenly-spaced ruler labels for own-scale mode.
+ * Returns array of { pct: 0–100, label: string }
+ */
+export function computeOwnScaleRuler(openDate, endDate) {
+  if (!openDate || !endDate) return null;
+  const openMs = new Date(openDate).getTime();
+  const endMs  = new Date(endDate).getTime();
+  if (endMs <= openMs) return null;
+
+  const labels = [];
+  for (let i = 0; i <= 4; i++) {
+    const pct = i / 4;
+    const ms  = openMs + pct * (endMs - openMs);
+    const d   = new Date(ms);
+    // Format: "May 21" or "May 21 13:00" if same-day range
+    const sameDay = (endMs - openMs) < 24 * 3600 * 1000;
+    const label = sameDay
+      ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok" })
+      : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Bangkok" });
+    labels.push({ pct: Math.round(pct * 100), label });
+  }
+  return labels;
+}
+
 // ── Session clock helpers ─────────────────────────────────────────────────────
 
 function getSessionWindow(market) {
   const now = new Date();
   const y = now.getUTCFullYear(), m = now.getUTCMonth(), d = now.getUTCDate();
   if (market === "gold") {
-    return {
-      start: Date.UTC(y, m, d, 2, 0, 0),   // 09:00 ICT
-      end:   Date.UTC(y, m, d, 10, 0, 0),  // 17:00 ICT
-    };
+    return { start: Date.UTC(y, m, d, 2, 0, 0), end: Date.UTC(y, m, d, 10, 0, 0) };
   }
-  return {
-    start: Date.UTC(y, m, d, 3, 0, 0),    // 10:00 ICT
-    end:   Date.UTC(y, m, d, 10, 0, 0),   // 17:00 ICT
-  };
+  return { start: Date.UTC(y, m, d, 3, 0, 0), end: Date.UTC(y, m, d, 10, 0, 0) };
 }
 
 function getSessionProgress(market) {
@@ -60,7 +166,7 @@ function getSessionProgress(market) {
   return (now - start) / (end - start);
 }
 
-// ── Fetch D1 trade history (on-demand only) ───────────────────────────────────
+// ── Fetch D1 trade history ────────────────────────────────────────────────────
 
 export async function fetchTradeHistory(from, to) {
   try {
@@ -76,13 +182,6 @@ export async function fetchTradeHistory(from, to) {
 
 // ── One lane per unique symbol ────────────────────────────────────────────────
 
-/**
- * @param {Array}  positions        KV portfolio positions
- * @param {string} activeStrategy   preset key ("ma_crossover" etc)
- * @param {string|null} strategyDuration  "4h" | "1d" | etc
- * @param {object} goldBundle       { workflow, stageStatuses, activeStageIdx, workflowDone }
- * @param {object} setBundle        { workflow, stageStatuses, activeStageIdx, workflowDone }
- */
 export function computeUniqueLanes(
   positions,
   activeStrategy,
@@ -128,22 +227,21 @@ export function computeUniqueLanes(
   return Object.values(map).map(lane => {
     lane.avgEntry = lane.totalQty > 0 ? lane.totalCost / lane.totalQty : 0;
 
-    // ── Pick correct workflow bundle for this lane's market ───────────────────
+    // Pick correct bundle for this lane's market
     const bundle = lane.market === "gold" ? goldBundle : setBundle;
     const wf     = bundle?.workflow;
     const wfDone = bundle?.workflowDone;
     const stageStatuses  = bundle?.stageStatuses || [];
     const activeStageIdx = bundle?.activeStageIdx || 0;
+    const wfActive       = !!wf && !wfDone;
 
-    const wfActive = !!wf && !wfDone;
-
-    // ── Protocol label ────────────────────────────────────────────────────────
+    // Protocol label
     if (wfActive) {
       const stage = wf.stages?.[activeStageIdx];
       lane.protocol       = `AI: ${wf.workflowName || wf.name || "workflow"}`;
       lane.protocolDetail = stage
         ? `S${activeStageIdx + 1}/${wf.stages.length} — ${stage.label || stage.action || ""}`
-        + (stage.timeWindow ? ` · ${stage.timeWindow}` : "")
+          + (stage.timeWindow ? ` · ${stage.timeWindow}` : "")
         : null;
       lane.hasWorkflow = true;
     } else if (activeStrategy && activeStrategy !== "off") {
@@ -156,28 +254,24 @@ export function computeUniqueLanes(
       lane.hasWorkflow    = false;
     }
 
-    // ── Timeline: session progress (shared clock, 17:00 ICT = right edge) ────
+    // ── Shared clock: session progress (always) ───────────────────────────────
     lane.timeProgress = getSessionProgress(lane.market);
 
-    // ── Strategy time window: is the strategy still active (not expired)? ─────
+    // ── Own scale: position open → last stage end date ────────────────────────
+    const wfEndDate = wfActive ? getWorkflowEndDate(wf) : null;
+    lane.ownScaleProgress = getOwnScaleProgress(lane, wfEndDate, durationMs);
+    lane.ownScaleEndDate  = wfEndDate;
+    lane.ownScaleOpenDate = lane.oldestOpenedAt ? new Date(lane.oldestOpenedAt) : null;
+
+    // ── Strategy expired (preset only) ───────────────────────────────────────
     let strategyExpired = false;
     if (!wfActive && durationMs && lane.oldestOpenedAt) {
-      const openedMs = new Date(lane.oldestOpenedAt).getTime();
-      strategyExpired = (now - openedMs) > durationMs;
+      strategyExpired = (now - new Date(lane.oldestOpenedAt).getTime()) > durationMs;
     }
     lane.strategyExpired = strategyExpired;
 
     // ── Plan status ───────────────────────────────────────────────────────────
-    // Priority:
-    // 1. AI workflow active → use stage outcome state
-    // 2. Strategy expired   → "late" (time bound passed, need to review)
-    // 3. Near stop loss     → "at_risk"
-    // 4. P&L positive       → "on_plan"
-    // 5. Flat / tiny loss   → "late"
-    // 6. Significant loss   → "at_risk"
-
     if (wfActive) {
-      // Derive from stage statuses
       const hasLoss = stageStatuses.some(s => s === "loss");
       const allGood = stageStatuses.every(s => s === "win" || s === "pending" || s === "active");
       if (bundle?.fallbackTriggered) lane.planStatus = "at_risk";
@@ -185,14 +279,13 @@ export function computeUniqueLanes(
       else if (allGood)              lane.planStatus = "on_plan";
       else                           lane.planStatus = "late";
     } else if (strategyExpired) {
-      lane.planStatus = "late"; // time bound passed — needs attention
+      lane.planStatus = "late";
     } else {
       const pnlPct = lane.totalCost > 0 ? lane.unrealisedPnL / lane.totalCost : 0;
       const price  = lane.currentPrice || lane.avgEntry;
       const slDist = lane.stopLoss   ? Math.abs(price - lane.stopLoss)   : null;
       const tpDist = lane.takeProfit ? Math.abs(lane.takeProfit - price) : null;
       const nearSL = slDist !== null && tpDist !== null && slDist < tpDist * 0.4;
-
       if (nearSL || pnlPct < -0.015) lane.planStatus = "at_risk";
       else if (pnlPct > 0.001)       lane.planStatus = "on_plan";
       else                           lane.planStatus = "late";
@@ -267,7 +360,7 @@ export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgr
     const posCount = portfolio?.positions?.length || 0;
 
     const laneLines = (lanes || []).map(l => {
-      const wfInfo = l.hasWorkflow ? ` | workflow stage: ${l.protocolDetail || "active"}` : "";
+      const wfInfo  = l.hasWorkflow ? ` | workflow stage: ${l.protocolDetail || "active"}` : "";
       const expInfo = l.strategyExpired ? " | ⚠️ strategy expired" : "";
       return `${l.displayName} (${l.market}): cost ฿${Math.round(l.totalCost).toLocaleString()} | open P&L ฿${Math.round(l.unrealisedPnL).toLocaleString()} | protocol: ${l.protocol || "none"} | status: ${l.planStatus}${wfInfo}${expInfo}`;
     }).join("\n");
@@ -277,7 +370,6 @@ export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgr
     ).join("\n");
 
     const gp = goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 };
-
     const goldWfName = goldBundle?.workflow?.workflowName || goldBundle?.workflow?.name;
     const setWfName  = setBundle?.workflow?.workflowName  || setBundle?.workflow?.name;
 
@@ -305,8 +397,7 @@ SET WORKFLOW:  ${setWfName  ? `"${setWfName}" active`  : "none"}
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        prompt,
-        market: "gold", symbol: "PORTFOLIO",
+        prompt, market: "gold", symbol: "PORTFOLIO",
         currentPrice: 0, cashBalance: balance,
         openPositions: posCount, recentCloses: [],
       }),
