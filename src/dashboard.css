@@ -2019,29 +2019,33 @@ a { color: var(--gold); }
 }
 
 /* ── Phase 6: 10-column unified positions table ── */
-.positions-table--10col { width: 100%; }
-.pos-row--10col {
+/* ── 12-column position table (Gold positions — Time + Side added) ─────────── */
+.positions-table--12col { width: 100%; overflow-x: auto; }
+.pos-row--12col {
   display: grid;
-  grid-template-columns: 60px 55px 68px 68px 72px 52px 52px 52px 1fr 52px;
+  grid-template-columns: 46px 54px 58px 34px 76px 76px 76px 52px 70px 70px 1fr 54px;
   gap: 0;
   align-items: center;
-  padding: 4px 0;
+  padding: 5px 2px;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   font-size: 11px;
 }
-.pos-row--10col.header {
-  font-size: 10px;
+.pos-row--12col.header {
+  font-size: 9px;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 3px 0 5px;
+  padding: 3px 2px 6px;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   background: var(--bg-base);
   z-index: 1;
 }
+.pos-time   { color: var(--text-muted); font-size: 10px; font-family: var(--font-mono); }
+.pos-side--buy  { color: var(--green); font-weight: 700; font-size: 10px; }
+.pos-side--sell { color: var(--red);   font-weight: 700; font-size: 10px; }
 /* Dim closed rows slightly */
 .pos-row--closed { opacity: 0.75; }
 
