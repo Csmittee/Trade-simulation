@@ -1,15 +1,14 @@
 /**
  * portfolio-injector.js
- * Phase 6 — Battlefield data layer (v6)
+ * Phase 6 — Battlefield data layer (v7)
  *
- * Key fixes from v5:
- * - Duration stored as MINUTES (integer) not string — fixed parseDurationMs()
- * - Own scale = Gantt model:
- *     lane.ownScaleNowPct  = where "now" sits within the full plan span (0–1)
- *     The bar always renders full width (100%) colored by status
- *     Pulse dot moves to ownScaleNowPct position
- * - Shared clock: unchanged (session progress 09:00–17:00 ICT)
- * - computeSharedOwnRuler() exported so Portfolio.jsx can call it
+ * Changes from v6:
+ * - fetchBattlefieldAdvisor: fixed response parser — Worker always returns
+ *   a workflow JSON object. Now extracts reasoning + sentiment + key stage
+ *   into readable 3-sentence text. Never shows raw JSON.
+ * - computeUniqueLanes: adds lane.stageNodes[] for milestone markers
+ *   Each node: { id, label, action, timeWindow, endMs, status }
+ *   Portfolio.jsx uses endMs to position nodes on the Gantt bar.
  */
 
 import config from "../../config.js";
@@ -23,13 +22,12 @@ export const DAILY_GOAL = 500;
 // ── Duration: stored as MINUTES (integer) ─────────────────────────────────────
 function parseDurationMs(duration) {
   if (!duration) return null;
-  // Duration is always stored as minutes (number from config.strategies)
   const mins = parseFloat(duration);
   if (!isNaN(mins) && mins > 0) return mins * 60 * 1000;
   return null;
 }
 
-// ── Parse last stage end date from timeWindow string ─────────────────────────
+// ── Parse stage end date from timeWindow string ───────────────────────────────
 
 export function parseLastStageEndDate(timeWindow) {
   if (!timeWindow || typeof timeWindow !== "string") return null;
@@ -42,7 +40,7 @@ export function parseLastStageEndDate(timeWindow) {
     if (!isNaN(d)) return d;
   }
 
-  // "May 21, 2026" → May 21 2026
+  // "May 21, 2026" → single day
   const singleMatch = tw.match(/([A-Za-z]+)\s+(\d{1,2}),?\s*(\d{4})/);
   if (singleMatch) {
     const d = new Date(singleMatch[0]);
@@ -101,21 +99,11 @@ export async function fetchTradeHistory(from, to) {
   } catch { return []; }
 }
 
-// ── Own scale ruler (shared across all visible lanes) ─────────────────────────
+// ── Own scale ruler ───────────────────────────────────────────────────────────
 
-/**
- * Computes:
- * 1. Ruler labels (5 ticks from earliest open to latest end)
- * 2. Per-lane ownScaleNowPct: where "now" sits in the shared timeline (0–1)
- * 3. Per-lane ownScaleBarStart / ownScaleBarEnd: where the lane's bar starts/ends (0–1)
- *
- * Mutates lanes in-place (adds ownScaleNowPct, ownScaleBarStart, ownScaleBarEnd).
- * Returns ruler label array or null if no date data.
- */
 export function computeSharedOwnRuler(lanes) {
-  let earliestMs = null;
-  let latestMs   = null;
-  const now      = Date.now();
+  let earliestMs = null, latestMs = null;
+  const now = Date.now();
 
   lanes.forEach(lane => {
     if (lane.ownScaleOpenMs) {
@@ -131,25 +119,30 @@ export function computeSharedOwnRuler(lanes) {
   const spanMs  = latestMs - earliestMs;
   const sameDay = spanMs < 24 * 3600 * 1000;
 
-  // Per-lane: bar starts at lane open, ends at lane plan end
-  // "now" marker sits at current time in shared span
   lanes.forEach(lane => {
     const laneOpenMs = lane.ownScaleOpenMs || earliestMs;
     const laneEndMs  = lane.ownScaleEndMs  || latestMs;
-
     lane.ownScaleBarStart  = Math.max(0, (laneOpenMs - earliestMs) / spanMs);
     lane.ownScaleBarEnd    = Math.min(1, (laneEndMs  - earliestMs) / spanMs);
     lane.ownScaleNowPct    = Math.min(1, Math.max(0, (now - earliestMs) / spanMs));
-    // Is "now" inside this lane's plan span?
     lane.ownScaleNowInSpan = now >= laneOpenMs && now <= laneEndMs;
+
+    // Position each stage node within the shared span
+    if (lane.stageNodes?.length) {
+      lane.stageNodes = lane.stageNodes.map(node => ({
+        ...node,
+        pct: node.endMs
+          ? Math.min(100, Math.max(0, Math.round(((node.endMs - earliestMs) / spanMs) * 100)))
+          : null,
+      }));
+    }
   });
 
-  // 5 ruler ticks
   const labels = [];
   for (let i = 0; i <= 4; i++) {
-    const pct  = i / 4;
-    const ms   = earliestMs + pct * spanMs;
-    const d    = new Date(ms);
+    const pct   = i / 4;
+    const ms    = earliestMs + pct * spanMs;
+    const d     = new Date(ms);
     const label = sameDay
       ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok" })
       : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Bangkok" });
@@ -161,11 +154,7 @@ export function computeSharedOwnRuler(lanes) {
 // ── One lane per unique symbol ────────────────────────────────────────────────
 
 export function computeUniqueLanes(
-  positions,
-  activeStrategy,
-  strategyDuration,
-  goldBundle,
-  setBundle,
+  positions, activeStrategy, strategyDuration, goldBundle, setBundle,
 ) {
   if (!Array.isArray(positions) || positions.length === 0) return [];
 
@@ -174,18 +163,13 @@ export function computeUniqueLanes(
     const sym = pos.symbol;
     if (!map[sym]) {
       map[sym] = {
-        symbol:         sym,
-        market:         pos.market,
-        displayName:    sym === "THAI_GOLD_BAHT" ? "Thai Gold" : sym.replace(".BK", ""),
-        totalQty:       0,
-        totalCost:      0,
-        unrealisedPnL:  0,
-        currentPrice:   pos.currentPrice || pos.entryPrice,
-        strategy:       pos.strategy || "manual",
-        oldestOpenedAt: pos.openedAt,
-        positionCount:  0,
-        stopLoss:       pos.stopLoss,
-        takeProfit:     pos.takeProfit,
+        symbol: sym, market: pos.market,
+        displayName: sym === "THAI_GOLD_BAHT" ? "Thai Gold" : sym.replace(".BK", ""),
+        totalQty: 0, totalCost: 0, unrealisedPnL: 0,
+        currentPrice: pos.currentPrice || pos.entryPrice,
+        strategy: pos.strategy || "manual",
+        oldestOpenedAt: pos.openedAt, positionCount: 0,
+        stopLoss: pos.stopLoss, takeProfit: pos.takeProfit,
       };
     }
     const lane = map[sym];
@@ -222,7 +206,7 @@ export function computeUniqueLanes(
       lane.hasWorkflow = true;
     } else if (activeStrategy && activeStrategy !== "off") {
       lane.protocol       = strategyName || activeStrategy;
-      lane.protocolDetail = strategyDuration ? `${durationMs ? Math.round(durationMs / 60000) + "m" : strategyDuration} window` : null;
+      lane.protocolDetail = durationMs ? `${Math.round(durationMs / 60000)}m window` : null;
       lane.hasWorkflow    = false;
     } else {
       lane.protocol       = lane.strategy !== "manual" ? lane.strategy : null;
@@ -230,25 +214,44 @@ export function computeUniqueLanes(
       lane.hasWorkflow    = false;
     }
 
-    // ── Shared clock progress (session-based, unchanged) ──────────────────────
+    // Shared clock progress
     lane.timeProgress = getSessionProgress(lane.market);
 
-    // ── Own scale: open ms → end ms ───────────────────────────────────────────
-    const openMs      = lane.oldestOpenedAt ? new Date(lane.oldestOpenedAt).getTime() : now;
+    // Own scale
+    const openMs = lane.oldestOpenedAt ? new Date(lane.oldestOpenedAt).getTime() : now;
     lane.ownScaleOpenMs = openMs;
-
     if (wfActive) {
       const endDate = getWorkflowEndDate(wf);
-      lane.ownScaleEndMs = endDate ? endDate.getTime() : openMs + (4 * 3600 * 1000); // fallback 4h
+      lane.ownScaleEndMs = endDate ? endDate.getTime() : openMs + (4 * 3600 * 1000);
     } else if (durationMs) {
       lane.ownScaleEndMs = openMs + durationMs;
     } else {
-      // No time bound — use session end
-      const { end } = getSessionWindow(lane.market);
-      lane.ownScaleEndMs = end;
+      lane.ownScaleEndMs = getSessionWindow(lane.market).end;
     }
 
-    // Strategy expired (preset only)
+    // ── Stage nodes for milestone markers ─────────────────────────────────────
+    // Each node gets: id, label, action, timeWindow, endMs, status
+    // pct is computed later in computeSharedOwnRuler() once span is known
+    if (wfActive && wf.stages?.length) {
+      lane.stageNodes = wf.stages.map((stage, idx) => {
+        const endDate = parseLastStageEndDate(stage.timeWindow);
+        const status  = stageStatuses[idx] || "pending";
+        return {
+          id:         stage.id || idx + 1,
+          label:      stage.label || `S${idx + 1}`,
+          action:     stage.action || "HOLD",
+          timeWindow: stage.timeWindow || "",
+          endMs:      endDate ? endDate.getTime() : null,
+          status,                    // "pending" | "active" | "win" | "loss" | "skipped"
+          isActive:   idx === activeStageIdx,
+          pct:        null,          // filled by computeSharedOwnRuler
+        };
+      });
+    } else {
+      lane.stageNodes = [];
+    }
+
+    // Strategy expired
     const strategyExpired = !wfActive && durationMs ? (now - openMs) > durationMs : false;
     lane.strategyExpired = strategyExpired;
 
@@ -279,12 +282,9 @@ export function computeUniqueLanes(
 
 function getStrategyDisplayName(key) {
   const names = {
-    ma_crossover:    "MA Crossover",
-    rsi_reversion:   "RSI Mean Reversion",
-    breakout_volume: "Volume Breakout",
-    golden_cross:    "Golden / Death Cross",
-    support_bounce:  "Support / Resistance Bounce",
-    off:             null,
+    ma_crossover: "MA Crossover", rsi_reversion: "RSI Mean Reversion",
+    breakout_volume: "Volume Breakout", golden_cross: "Golden / Death Cross",
+    support_bounce: "Support / Resistance Bounce", off: null,
   };
   return names[key] || key;
 }
@@ -334,39 +334,104 @@ export function computeGoalProgress(trades) {
   };
 }
 
-// ── AI battlefield advisor ────────────────────────────────────────────────────
+// ── AI battlefield advisor — fixed response parser ────────────────────────────
 
+/**
+ * The Worker /api/strategy ALWAYS returns a workflow JSON object:
+ * { workflowName, sentiment, confidence, reasoning, stages[], ... }
+ *
+ * We extract the meaningful parts and format as readable 3-sentence advice.
+ * Never show raw JSON.
+ */
 export async function fetchBattlefieldAdvisor({ portfolio, assetStats, goalProgress, goldBundle, setBundle, lanes }) {
   try {
     const balance  = portfolio?.balance || 0;
     const posCount = portfolio?.positions?.length || 0;
+
     const laneLines = (lanes || []).map(l =>
       `${l.displayName} (${l.market}): cost ฿${Math.round(l.totalCost).toLocaleString()} | open P&L ฿${Math.round(l.unrealisedPnL).toLocaleString()} | protocol: ${l.protocol || "none"} | status: ${l.planStatus}${l.hasWorkflow ? ` | stage: ${l.protocolDetail || "active"}` : ""}${l.strategyExpired ? " | ⚠️ expired" : ""}`
     ).join("\n");
+
     const statsLines = Object.values(assetStats || {}).map(s =>
       `${s.symbol}: ${s.tradeCount} trades | win ${s.winRate}% | total P&L ฿${Math.round(s.totalPnl)}`
     ).join("\n");
+
     const gp = goalProgress || { todayPnl: 0, goal: DAILY_GOAL, pct: 0 };
     const goldWfName = goldBundle?.workflow?.workflowName || goldBundle?.workflow?.name;
     const setWfName  = setBundle?.workflow?.workflowName  || setBundle?.workflow?.name;
-    const prompt = `BATTLEFIELD ADVISOR — helicopter view.
-POSITIONS:\n${laneLines || "None"}
-HISTORY:\n${statsLines || "None"}
-CASH: ฿${Math.round(balance).toLocaleString()} | GOAL: ฿${gp.goal}/day | Today: ฿${gp.todayPnl} (${gp.pct}%)
-GOLD WF: ${goldWfName || "none"} | SET WF: ${setWfName || "none"}
-3-sentence assessment: 1) what earns/bleeds 2) biggest risk 3) one counter-measure. ฿ amounts. No preamble.`;
+
+    const prompt = `BATTLEFIELD ADVISOR — helicopter view of my whole portfolio.
+
+LIVE POSITIONS:
+${laneLines || "No open positions"}
+
+HISTORICAL STATS:
+${statsLines || "No history loaded"}
+
+CASH: ฿${Math.round(balance).toLocaleString()} | GOAL: ฿${gp.goal}/day | Today P&L: ฿${gp.todayPnl} (${gp.pct}%)
+GOLD WORKFLOW: ${goldWfName || "none"} | SET WORKFLOW: ${setWfName || "none"}
+
+Respond in plain text — NO JSON. Give exactly 3 sentences:
+1. What is earning and what is bleeding capital right now (use ฿ amounts)
+2. The single biggest risk on this battlefield
+3. One concrete counter-measure to execute immediately
+
+Do not create a strategy workflow. Plain conversational text only.`;
+
     const res = await fetch(WORKER_STRAT, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, market: "gold", symbol: "PORTFOLIO", currentPrice: 0, cashBalance: balance, openPositions: posCount, recentCloses: [] }),
+      body: JSON.stringify({
+        prompt, market: "gold", symbol: "PORTFOLIO",
+        currentPrice: 0, cashBalance: balance,
+        openPositions: posCount, recentCloses: [],
+      }),
     });
+
     const json = await res.json();
     if (!json.success) return `Worker error: ${json.error || "unknown"}`;
+
     const d = json.data;
-    if (typeof d === "string") return d;
-    if (d?.advice)  return d.advice;
-    if (d?.summary) return d.summary;
-    if (d?.name && d?.stages) return `Strategy "${d.name}" (${d.stages.length} stages). Use AI Assist in Gold/SET tab.`;
-    return String(JSON.stringify(d)).slice(0, 400);
+
+    // Handle all possible Worker response shapes
+    if (typeof d === "string" && d.trim().length > 0) return d.trim();
+    if (d?.advice  && typeof d.advice  === "string") return d.advice.trim();
+    if (d?.summary && typeof d.summary === "string") return d.summary.trim();
+
+    // Worker returned a workflow object (most common case) — extract readable text
+    if (d && typeof d === "object") {
+      const parts = [];
+
+      // Reasoning from the AI (2-3 sentences about market conditions)
+      if (d.reasoning) parts.push(d.reasoning);
+
+      // Sentiment + confidence
+      if (d.sentiment && d.confidence) {
+        const sentimentLine = `Overall outlook: ${d.sentiment} (${d.confidence} confidence).`;
+        if (!d.reasoning) parts.push(sentimentLine);
+      }
+
+      // Key action from first active/pending stage
+      if (d.stages?.length) {
+        const activeStage = d.stages.find(s => s.action !== "HOLD") || d.stages[0];
+        if (activeStage) {
+          parts.push(
+            `Suggested action: ${activeStage.action} — ${activeStage.label || ""}` +
+            (activeStage.timeWindow ? ` (${activeStage.timeWindow})` : "") +
+            (activeStage.note ? `. ${activeStage.note}` : "") + "."
+          );
+        }
+      }
+
+      // Fallback rule
+      if (d.fallbackRule) parts.push(`Fallback: ${d.fallbackRule}`);
+
+      if (parts.length > 0) return parts.join(" ");
+
+      // Last resort — workflow name only
+      if (d.workflowName) return `AI generated plan "${d.workflowName}". For full workflow execution, use AI Assist in Gold or SET tab.`;
+    }
+
+    return "AI advisor returned an unexpected response. Try asking again.";
   } catch (err) {
     return `AI advisor error: ${err.message}`;
   }
