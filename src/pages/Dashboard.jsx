@@ -489,9 +489,11 @@ export default function Dashboard() {
   const handleSetOrderModeChange = useCallback((sym, mode) => {
     setSetOrderModes(prev => ({ ...prev, [sym]: mode }));
   }, []);
+
+  const handleSetStrategyChange = useCallback((sym, patch) => {
     setSetStrategySettings(prev => ({ ...prev, [sym]: { ...(prev[sym] || {}), ...patch } }));
   }, []);
-
+  
   // ── Loading / first-run states ────────────────────────────────────────────
   if (!bootstrapped) {
     return (
