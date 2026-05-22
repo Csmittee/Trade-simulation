@@ -245,6 +245,8 @@ export default function Dashboard() {
   const [setWorkflows,  setSetWorkflows]  = useState({});
   // setOrderModes: { "PTT.BK": "manual", ... }
   const [setOrderModes, setSetOrderModes] = useState({});
+  // Per-symbol SET strategy settings { "PTT.BK": { activeStrategy, autoExecute, strategyDuration } }
+  const [setStrategySettings, setSetStrategySettings] = useState({});
   // Track which symbol SetMarket currently has selected (so we can derive props)
   const [activeSetSymbol, setActiveSetSymbol] = useState("PTT.BK");
 
@@ -312,7 +314,9 @@ export default function Dashboard() {
             // Migrate old flat setOrderMode → apply to PTT.BK
             setSetOrderModes({ "PTT.BK": b.setOrderMode });
           }
-
+            if (b.setStrategySettings && typeof b.setStrategySettings === "object") {
+            setSetStrategySettings(b.setStrategySettings);
+          }
         } catch { /* malformed JSON — start fresh */ }
       }
 
@@ -375,12 +379,13 @@ export default function Dashboard() {
       // KI011: persist as dicts
       setWorkflows,
       setOrderModes,
+      setStrategySettings,
     }));
   }, [
     activeStrategy, autoExecute, strategyDuration, goldOrderMode,
     goldWorkflow, goldStageStatuses, goldActiveStageIdx, goldConsecutiveRed,
     goldWorkflowDone, goldFallbackTriggered, goldStagePnl,
-    setWorkflows, setOrderModes,
+    setWorkflows, setOrderModes,setStrategySettings,
   ]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -393,6 +398,7 @@ export default function Dashboard() {
     setShowReset(false);
     setActiveStrategy("off");
     setAutoExecute(false);
+  
     setStrategyDuration(null);
     // Clear gold
     setGoldWorkflow(null);
@@ -406,6 +412,7 @@ export default function Dashboard() {
     // Clear SET dicts
     setSetWorkflows({});
     setSetOrderModes({});
+    setSetStrategySettings({});
     setActivityEvents([]);
     await kvSetSetting(BUNDLE_KEY, JSON.stringify(EMPTY_BUNDLE));
   }, []);
@@ -480,8 +487,8 @@ export default function Dashboard() {
     setSetWorkflows(prev => patchSetBundle(prev, sym, patch));
   }, []);
 
-  const handleSetOrderModeChange = useCallback((sym, mode) => {
-    setSetOrderModes(prev => ({ ...prev, [sym]: mode }));
+  const handleSetStrategyChange = useCallback((sym, patch) => {
+    setSetStrategySettings(prev => ({ ...prev, [sym]: { ...(prev[sym] || {}), ...patch } }));
   }, []);
 
   // ── Loading / first-run states ────────────────────────────────────────────
@@ -505,20 +512,15 @@ export default function Dashboard() {
   const goldOpen      = isMarketOpen("gold", enforceHours);
 
   // Shared props identical for both markets
+// Base props shared by both markets (strategy settings removed from here — Gold gets them directly, SET per-symbol)
   const commonMarketProps = {
     portfolio,
     setPortfolio,
     enforceHours,
-    onAIStrategy:             handleAIStrategy,
-    activeStrategy,
-    onStrategyChange:         setActiveStrategy,
-    autoExecute,
-    onAutoExecuteChange:      setAutoExecute,
-    strategyDuration,
-    onStrategyDurationChange: setStrategyDuration,
+    onAIStrategy:  handleAIStrategy,
     activityEvents,
-    onActivityEvent:          handleActivityEvent,
-    onLoadMoreLogs:           handleLoadMoreLogs,
+    onActivityEvent:  handleActivityEvent,
+    onLoadMoreLogs:   handleLoadMoreLogs,
     logLoading,
     logHasMore,
   };
@@ -535,19 +537,21 @@ export default function Dashboard() {
     workflowDone:         goldWorkflowDone,      setWorkflowDone:      setGoldWorkflowDone,
     fallbackTriggered:    goldFallbackTriggered, setFallbackTriggered: setGoldFallbackTriggered,
     stagePnl:             goldStagePnl,          setStagePnl:          setGoldStagePnl,
-    aiWorkflowActive:     goldWorkflowActive,
+    aiWorkflowActive:     goldWorkflowActive,    onStrategyChange:     setActiveStrategy,
+    onAutoExecuteChange:  setAutoExecute,        onStrategyDurationChange: setStrategyDuration,
+    orderMode:            goldOrderMode,
   };
 
   // KI011: SET props — pass full dicts + per-symbol helpers
   // SetMarket derives the active symbol's slice internally
   const setMarketProps = {
     ...commonMarketProps,
-    // Full dict — SetMarket reads/writes per symbol
     setWorkflows,
-    onSetWorkflowPatch:   handleSetWorkflowPatch,
+    onSetWorkflowPatch:      handleSetWorkflowPatch,
     setOrderModes,
-    onSetOrderModeChange: handleSetOrderModeChange,
-    // Callback so Dashboard knows which symbol is selected (for Portfolio sync)
+    onSetOrderModeChange:    handleSetOrderModeChange,
+    setStrategySettings,
+    onSetStrategyChange:     handleSetStrategyChange,
     onActiveSetSymbolChange: setActiveSetSymbol,
   };
 
