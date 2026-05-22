@@ -2081,3 +2081,43 @@ a { color: var(--gold); }
   color: var(--text-muted);
   border: 1px solid rgba(156,163,175,0.2);
 }
+/* ── Watchlist panel collapse (Issue 2) ──────────────────────────────────── */
+.panel-watchlist {
+  transition: width 0.2s ease, min-width 0.2s ease, padding 0.2s ease;
+  position: relative;
+}
+.panel-watchlist--collapsed {
+  width: 28px !important;
+  min-width: 28px !important;
+  padding: 8px 0;
+  overflow: hidden;
+}
+.wl-collapse-btn {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 3px 5px;
+  z-index: 2;
+  line-height: 1;
+}
+.wl-collapse-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--gold);
+}
+.panel-watchlist--collapsed .wl-collapse-btn {
+  right: 2px;
+  top: 8px;
+}
+/* Grid adjusts automatically because panel-watchlist width shrinks */
+.set-market .market-body {
+  grid-template-columns: 180px 1fr var(--right-panel-w);
+}
+.set-market .market-body:has(.panel-watchlist--collapsed) {
+  grid-template-columns: 28px 1fr var(--right-panel-w);
+}
