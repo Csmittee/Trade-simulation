@@ -195,15 +195,14 @@ const EMPTY_WORKFLOW = {
 };
 
 const EMPTY_BUNDLE = {
-  activeStrategy:    "off",
-  autoExecute:       false,
-  strategyDuration:  null,
-  goldOrderMode:     "manual",
-  // KI011: setOrderModes dict replaces flat setOrderMode
-  setOrderModes:     {},
-  gold:              { ...EMPTY_WORKFLOW },
-  // KI011: set dict replaces single set object
-  setWorkflows:      {},
+  activeStrategy:      "off",
+  autoExecute:         false,
+  strategyDuration:    null,
+  goldOrderMode:       "manual",
+  setOrderModes:       {},
+  setStrategySettings: {},
+  gold:                { ...EMPTY_WORKFLOW },
+  setWorkflows:        {},
 };
 
 // ── Helpers: read/write a single symbol's slice from the dict ─────────────────
@@ -487,7 +486,9 @@ export default function Dashboard() {
     setSetWorkflows(prev => patchSetBundle(prev, sym, patch));
   }, []);
 
-  const handleSetStrategyChange = useCallback((sym, patch) => {
+  const handleSetOrderModeChange = useCallback((sym, mode) => {
+    setSetOrderModes(prev => ({ ...prev, [sym]: mode }));
+  }, []);
     setSetStrategySettings(prev => ({ ...prev, [sym]: { ...(prev[sym] || {}), ...patch } }));
   }, []);
 
@@ -526,8 +527,14 @@ export default function Dashboard() {
   };
 
   // Gold props — unchanged from Phase 6b
-  const goldMarketProps = {
+const goldMarketProps = {
     ...commonMarketProps,
+    activeStrategy,
+    onStrategyChange:         setActiveStrategy,
+    autoExecute,
+    onAutoExecuteChange:      setAutoExecute,
+    strategyDuration,
+    onStrategyDurationChange: setStrategyDuration,
     orderMode:            goldOrderMode,
     onOrderModeChange:    setGoldOrderMode,
     workflow:             goldWorkflow,          setWorkflow:          setGoldWorkflow,
@@ -537,9 +544,7 @@ export default function Dashboard() {
     workflowDone:         goldWorkflowDone,      setWorkflowDone:      setGoldWorkflowDone,
     fallbackTriggered:    goldFallbackTriggered, setFallbackTriggered: setGoldFallbackTriggered,
     stagePnl:             goldStagePnl,          setStagePnl:          setGoldStagePnl,
-    aiWorkflowActive:     goldWorkflowActive,    onStrategyChange:     setActiveStrategy,
-    onAutoExecuteChange:  setAutoExecute,        onStrategyDurationChange: setStrategyDuration,
-    orderMode:            goldOrderMode,
+    aiWorkflowActive:     goldWorkflowActive,
   };
 
   // KI011: SET props — pass full dicts + per-symbol helpers
