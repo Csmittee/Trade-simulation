@@ -292,12 +292,13 @@ export default function SetMarket({
   onSetOrderModeChange,
   onActiveSetSymbolChange,
 }) {
-  const [activeSymbol,    setActiveSymbol]    = useState(SET_UNIVERSE[0].t);
-  const [timeframe,       setTimeframe]       = useState("1D");
-  const [panel3Collapsed, setPanel3Collapsed] = useState(false);
-  const [sellQty,         setSellQty]         = useState("");
-  const [posView,         setPosView]         = useState("active");
-  const [sellDeskOpen,    setSellDeskOpen]    = useState(false);
+ const [activeSymbol,       setActiveSymbol]       = useState(SET_UNIVERSE[0].t);
+  const [timeframe,          setTimeframe]          = useState("1D");
+  const [panel3Collapsed,    setPanel3Collapsed]    = useState(false);
+  const [sellQty,            setSellQty]            = useState("");
+  const [posView,            setPosView]            = useState("active");
+  const [sellDeskOpen,       setSellDeskOpen]       = useState(false);
+  const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
 
   const {
     watchlistData, activeQuote, priceHistory, historyLoading,
@@ -464,12 +465,21 @@ export default function SetMarket({
       <div className="market-body">
 
         {/* Watchlist */}
-        <div className="panel-watchlist">
-          <WatchlistPanel
-            activeSymbol={activeSymbol}
-            watchlistData={watchlistData}
-            onSymbolChange={handleSymbolChange}
-          />
+      <div className={`panel-watchlist ${watchlistCollapsed ? "panel-watchlist--collapsed" : ""}`}>
+          <button
+            className="wl-collapse-btn"
+            onClick={() => setWatchlistCollapsed(v => !v)}
+            title={watchlistCollapsed ? "Show symbol list" : "Hide symbol list"}
+          >
+            {watchlistCollapsed ? "▶" : "◀"}
+          </button>
+          {!watchlistCollapsed && (
+            <WatchlistPanel
+              activeSymbol={activeSymbol}
+              watchlistData={watchlistData}
+              onSymbolChange={handleSymbolChange}
+            />
+          )}
         </div>
 
         {/* Left column */}
