@@ -153,7 +153,7 @@ export function computeSharedOwnRuler(lanes) {
 // KI011: setBundle replaced with setWorkflows dict { "PTT.BK": bundle, "SCB.BK": bundle, ... }
 
 export function computeUniqueLanes(
-  positions, activeStrategy, strategyDuration, goldBundle, setWorkflows,
+  positions, activeStrategy, strategyDuration, setStrategySettings, goldBundle, setWorkflows,
 ) {
   if (!Array.isArray(positions) || positions.length === 0) return [];
 
@@ -180,8 +180,7 @@ export function computeUniqueLanes(
     if (pos.strategy && pos.strategy !== "manual") lane.strategy = pos.strategy;
   });
 
-  const strategyName = getStrategyDisplayName(activeStrategy);
-  const durationMs   = parseDurationMs(strategyDuration);
+  
   const now          = Date.now();
 
   return Object.values(map).map(lane => {
@@ -214,14 +213,23 @@ export function computeUniqueLanes(
           + (stage.timeWindow ? ` · ${stage.timeWindow}` : "")
         : null;
       lane.hasWorkflow = true;
-    } else if (activeStrategy && activeStrategy !== "off") {
-      lane.protocol       = strategyName || activeStrategy;
-      lane.protocolDetail = durationMs ? `${Math.round(durationMs / 60000)}m window` : null;
-      lane.hasWorkflow    = false;
-    } else {
-      lane.protocol       = lane.strategy !== "manual" ? lane.strategy : null;
-      lane.protocolDetail = null;
-      lane.hasWorkflow    = false;
+   } else {
+      // Per-symbol strategy lookup: Gold uses global, SET uses per-symbol dict
+      const symStrategy   = lane.market === "gold"
+        ? { activeStrategy, strategyDuration }
+        : (setStrategySettings?.[lane.symbol] || {});
+      const symStratName  = getStrategyDisplayName(symStrategy.activeStrategy);
+      const symDurationMs = parseDurationMs(symStrategy.strategyDuration);
+
+      if (symStrategy.activeStrategy && symStrategy.activeStrategy !== "off") {
+        lane.protocol       = symStratName || symStrategy.activeStrategy;
+        lane.protocolDetail = symDurationMs ? `${Math.round(symDurationMs / 60000)}m window` : null;
+        lane.hasWorkflow    = false;
+      } else {
+    lane.protocol       = lane.strategy !== "manual" ? lane.strategy : null;
+        lane.protocolDetail = null;
+        lane.hasWorkflow    = false;
+      }
     }
 
     // Shared clock progress
@@ -233,8 +241,8 @@ export function computeUniqueLanes(
     if (wfActive) {
       const endDate = getWorkflowEndDate(wf);
       lane.ownScaleEndMs = endDate ? endDate.getTime() : openMs + (4 * 3600 * 1000);
-    } else if (durationMs) {
-      lane.ownScaleEndMs = openMs + durationMs;
+   } else if (symDurMs2) {
+      lane.ownScaleEndMs = openMs + symDurMs2;
     } else {
       lane.ownScaleEndMs = getSessionWindow(lane.market).end;
     }
@@ -260,7 +268,11 @@ export function computeUniqueLanes(
     }
 
     // Strategy expired
-    const strategyExpired = !wfActive && durationMs ? (now - openMs) > durationMs : false;
+    const symStrat2     = lane.market === "gold"
+      ? { strategyDuration }
+      : (setStrategySettings?.[lane.symbol] || {});
+    const symDurMs2     = parseDurationMs(symStrat2.strategyDuration);
+    const strategyExpired = !wfActive && symDurMs2 ? (now - openMs) > symDurMs2 : false;
     lane.strategyExpired = strategyExpired;
 
     // Plan status
