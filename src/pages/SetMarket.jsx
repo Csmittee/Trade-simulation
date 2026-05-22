@@ -78,7 +78,7 @@ const SET_UNIVERSE = [
   { t: "BJC.BK",     n: "Berli Jucker",             tier: 1 },
   { t: "STGT.BK",    n: "Sri Trang Gloves",         tier: 1 },
   { t: "CBG.BK",     n: "Carabao Group",            tier: 1 },
-  { t: "ESSO.BK",    n: "Esso (Thailand)",           tier: 1 },
+ 
   { t: "TQM.BK",     n: "TQM Alpha",                tier: 1 },
   // ── Top 100 ─────────────────────────────────────────────────────────────
   { t: "MAJOR.BK",   n: "Major Cineplex",           tier: 2 },
@@ -161,7 +161,10 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
 
   const filtered = useMemo(() => {
     const tierNum = tier === "all" ? null : parseInt(tier);
+    const seen = new Set();
     return SET_UNIVERSE.filter(s => {
+      if (seen.has(s.t)) return false;       // deduplicate by ticker
+      seen.add(s.t);
       if (tierNum && s.tier > tierNum) return false;
       if (!query.trim()) return true;
       const q = query.toLowerCase();
