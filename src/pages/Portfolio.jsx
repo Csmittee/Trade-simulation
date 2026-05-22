@@ -194,6 +194,7 @@ function AssetCard({ lane, stats, isSelected, onSelect, onDragStart, onNavigate 
 // KI011: setBundle replaced with setWorkflows dict
 export default function Portfolio({
   portfolio, activeStrategy, strategyDuration,
+  setStrategySettings,
   goldBundle, setWorkflows, activityEvents, onTabSwitch,
 }) {
   const summary   = calcPortfolioSummary(portfolio);
@@ -214,7 +215,7 @@ export default function Portfolio({
   const [isDragOver,     setIsDragOver]     = useState(false);
 
   // KI011: pass setWorkflows dict (not single setBundle)
-  const lanes = computeUniqueLanes(positions, activeStrategy, strategyDuration, goldBundle, setWorkflows);
+ const lanes = computeUniqueLanes(positions, activeStrategy, strategyDuration, setStrategySettings, goldBundle, setWorkflows);
 
   const buildCards = () => {
     const cards = lanes.map(lane => ({ ...lane, stats: assetStats[lane.symbol] || null }));
