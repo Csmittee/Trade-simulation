@@ -75,9 +75,11 @@ export function useSetMarket({ activeSymbol, portfolio, setPortfolio, enforceHou
   }, [activeSymbol, timeframe, fetchHistory]);
 
   // ── Fetch watchlist quotes (batch, every 60s) ────────────────────────────────
-  const fetchWatchlist = useCallback(async () => {
+ const fetchWatchlist = useCallback(async () => {
     try {
-      const symbolsParam = WATCHLIST.join(",");
+      // Always include the active symbol so its quote/price is always available
+      const symSet = new Set([...WATCHLIST, activeSymbol]);
+      const symbolsParam = [...symSet].join(",");
       const res  = await fetch(`${WORKER_SET}?symbols=${encodeURIComponent(symbolsParam)}`);
       if (!res.ok) throw new Error(`SET Worker returned ${res.status}`);
       const json = await res.json();
