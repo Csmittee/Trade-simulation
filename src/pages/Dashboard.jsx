@@ -671,6 +671,7 @@ const goldMarketProps = {
             portfolio={portfolio}
             activeStrategy={activeStrategy}
             strategyDuration={strategyDuration}
+            setStrategySettings={setStrategySettings}
             goldBundle={{
               workflow:          goldWorkflow,
               stageStatuses:     goldStageStatuses,
