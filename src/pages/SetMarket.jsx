@@ -2,15 +2,8 @@
  * SetMarket.jsx
  * Phase 6 patch — strategyDuration, AI workflow, search, tier filter
  * Phase 6 bottom panel redesign
- *
- * KI011 (Phase 6c) — Per-symbol workflow independence
- * - Props changed: no longer receives flat workflow/orderMode/aiWorkflowActive
- * - Receives: setWorkflows (dict), onSetWorkflowPatch, setOrderModes, onSetOrderModeChange,
- *             onActiveSetSymbolChange
- * - On symbol change: calls onActiveSetSymbolChange(sym) → Dashboard tracks it
- * - Derives per-symbol slice from dict for current activeSymbol
- * - Passes derived slice props down to OrderPanel
- * - aiWorkflowActive is ONLY true when the ACTIVE symbol has a live workflow
+ * KI011 — Per-symbol workflow independence
+ * Phase 6d — Per-symbol preset strategy settings (activeStrategy, autoExecute, strategyDuration)
  */
 
 import { useState, useCallback, useMemo } from "react";
@@ -78,7 +71,7 @@ const SET_UNIVERSE = [
   { t: "BJC.BK",     n: "Berli Jucker",             tier: 1 },
   { t: "STGT.BK",    n: "Sri Trang Gloves",         tier: 1 },
   { t: "CBG.BK",     n: "Carabao Group",            tier: 1 },
- 
+  { t: "ESSO.BK",    n: "Esso (Thailand)",           tier: 1 },
   { t: "TQM.BK",     n: "TQM Alpha",                tier: 1 },
   // ── Top 100 ─────────────────────────────────────────────────────────────
   { t: "MAJOR.BK",   n: "Major Cineplex",           tier: 2 },
@@ -105,7 +98,6 @@ const SET_UNIVERSE = [
   { t: "SKY.BK",     n: "Sky Thai Airways",         tier: 2 },
   { t: "SPALI.BK",   n: "Supalai",                  tier: 2 },
   { t: "SSP.BK",     n: "Solar Power Solutions",    tier: 2 },
-  { t: "ESSO.BK",    n: "ExxonMobil Thailand",      tier: 2 },
   // ── Extended ─────────────────────────────────────────────────────────────
   { t: "AIRA.BK",    n: "AIRA Capital",             tier: 3 },
   { t: "AKP.BK",     n: "Akkhapat Group",           tier: 3 },
@@ -156,14 +148,14 @@ const SET_UNIVERSE = [
 const TIER_LABELS = { all: "All SET/MAI", "1": "Top 50", "2": "Top 100" };
 
 function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
-  const [query, setQuery]   = useState("");
-  const [tier,  setTier]    = useState("1");
+  const [query, setQuery] = useState("");
+  const [tier,  setTier]  = useState("1");
 
   const filtered = useMemo(() => {
     const tierNum = tier === "all" ? null : parseInt(tier);
     const seen = new Set();
     return SET_UNIVERSE.filter(s => {
-      if (seen.has(s.t)) return false;       // deduplicate by ticker
+      if (seen.has(s.t)) return false; // deduplicate
       seen.add(s.t);
       if (tierNum && s.tier > tierNum) return false;
       if (!query.trim()) return true;
@@ -176,16 +168,12 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
     <div className="watchlist-panel">
       <div className="section-title">
         SET / MAI
-        <TooltipIcon content="Search any SET or MAI listed stock by ticker or name. Filter by market cap tier for quick scalp targets." />
+        <TooltipIcon content="Search any SET or MAI listed stock by ticker or name. Filter by market cap tier." />
       </div>
 
       <div className="wl-tier-row">
         {Object.entries(TIER_LABELS).map(([key, label]) => (
-          <button
-            key={key}
-            className={`wl-tier-btn ${tier === key ? "active" : ""}`}
-            onClick={() => setTier(key)}
-          >
+          <button key={key} className={`wl-tier-btn ${tier === key ? "active" : ""}`} onClick={() => setTier(key)}>
             {label}
           </button>
         ))}
@@ -199,9 +187,7 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
           value={query}
           onChange={e => setQuery(e.target.value)}
         />
-        {query && (
-          <button className="wl-search-clear" onClick={() => setQuery("")}>✕</button>
-        )}
+        {query && <button className="wl-search-clear" onClick={() => setQuery("")}>✕</button>}
       </div>
 
       <div className="watchlist-list">
@@ -212,19 +198,13 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
             const quote   = watchlistData[s.t];
             const changeUp = (quote?.changePct || 0) >= 0;
             return (
-              <button
-                key={s.t}
-                className={`watchlist-row ${s.t === activeSymbol ? "active" : ""}`}
-                onClick={() => onSymbolChange(s.t)}
-              >
+              <button key={s.t} className={`watchlist-row ${s.t === activeSymbol ? "active" : ""}`} onClick={() => onSymbolChange(s.t)}>
                 <div className="wl-left">
                   <span className="wl-symbol">{s.t.replace(".BK", "")}</span>
                   <span className="wl-name">{s.n}</span>
                 </div>
                 <div className="wl-right">
-                  {!quote ? (
-                    <span className="wl-loading">—</span>
-                  ) : (
+                  {!quote ? <span className="wl-loading">—</span> : (
                     <>
                       <span className="wl-price">฿{quote.price?.toFixed(2)}</span>
                       <span className={`wl-change ${changeUp ? "up" : "down"}`}>
@@ -260,7 +240,7 @@ async function logTradeToD1(trade) {
   }
 }
 
-// ── Helper: extract one symbol's bundle from the dict ─────────────────────────
+// ── Helper: extract one symbol's workflow bundle from the dict ────────────────
 function getBundleForSym(setWorkflows, sym) {
   return setWorkflows?.[sym] || {
     workflow: null, stageStatuses: [], activeStageIdx: 0,
@@ -274,25 +254,22 @@ export default function SetMarket({
   setPortfolio,
   enforceHours,
   onAIStrategy,
-  activeStrategy,
-  onStrategyChange,
-  autoExecute,
-  onAutoExecuteChange,
-  strategyDuration,
-  onStrategyDurationChange,
   activityEvents,
   onActivityEvent,
   onLoadMoreLogs,
   logLoading,
   logHasMore,
-  // KI011: new dict-based props (replace flat workflow/orderMode props)
+  // KI011: per-symbol workflow dicts
   setWorkflows,
   onSetWorkflowPatch,
   setOrderModes,
   onSetOrderModeChange,
+  // Phase 6d: per-symbol strategy settings dict
+  setStrategySettings,
+  onSetStrategyChange,
   onActiveSetSymbolChange,
 }) {
- const [activeSymbol,       setActiveSymbol]       = useState(SET_UNIVERSE[0].t);
+  const [activeSymbol,       setActiveSymbol]       = useState(SET_UNIVERSE[0].t);
   const [timeframe,          setTimeframe]          = useState("1D");
   const [panel3Collapsed,    setPanel3Collapsed]    = useState(false);
   const [sellQty,            setSellQty]            = useState("");
@@ -334,23 +311,33 @@ export default function SetMarket({
 
   const fetchIntel = useFetchIntel();
 
-  // KI011: derive active symbol's slice from the dicts
-  const symBundle   = getBundleForSym(setWorkflows, activeSymbol);
-  const symOrderMode = setOrderModes?.[activeSymbol] || "manual";
-  // Only lock if THIS symbol has an active workflow
+  // ── KI011: derive active symbol's workflow slice ──────────────────────────
+  const symBundle         = getBundleForSym(setWorkflows, activeSymbol);
+  const symOrderMode      = setOrderModes?.[activeSymbol] || "manual";
   const symWorkflowActive = !!symBundle.workflow && !symBundle.workflowDone;
 
-  // Setters that patch only the active symbol's slice
-  const setSymWorkflow          = useCallback(v => onSetWorkflowPatch(activeSymbol, { workflow: typeof v === "function" ? v(symBundle.workflow) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.workflow]);
-  const setSymStageStatuses     = useCallback(v => onSetWorkflowPatch(activeSymbol, { stageStatuses: typeof v === "function" ? v(symBundle.stageStatuses) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.stageStatuses]);
-  const setSymActiveStageIdx    = useCallback(v => onSetWorkflowPatch(activeSymbol, { activeStageIdx: typeof v === "function" ? v(symBundle.activeStageIdx) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.activeStageIdx]);
-  const setSymConsecutiveRed    = useCallback(v => onSetWorkflowPatch(activeSymbol, { consecutiveRed: typeof v === "function" ? v(symBundle.consecutiveRed) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.consecutiveRed]);
-  const setSymWorkflowDone      = useCallback(v => onSetWorkflowPatch(activeSymbol, { workflowDone: typeof v === "function" ? v(symBundle.workflowDone) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.workflowDone]);
+  // Workflow setters — patch only the active symbol's slice
+  const setSymWorkflow          = useCallback(v => onSetWorkflowPatch(activeSymbol, { workflow:          typeof v === "function" ? v(symBundle.workflow)          : v }), [activeSymbol, onSetWorkflowPatch, symBundle.workflow]);
+  const setSymStageStatuses     = useCallback(v => onSetWorkflowPatch(activeSymbol, { stageStatuses:     typeof v === "function" ? v(symBundle.stageStatuses)     : v }), [activeSymbol, onSetWorkflowPatch, symBundle.stageStatuses]);
+  const setSymActiveStageIdx    = useCallback(v => onSetWorkflowPatch(activeSymbol, { activeStageIdx:    typeof v === "function" ? v(symBundle.activeStageIdx)    : v }), [activeSymbol, onSetWorkflowPatch, symBundle.activeStageIdx]);
+  const setSymConsecutiveRed    = useCallback(v => onSetWorkflowPatch(activeSymbol, { consecutiveRed:    typeof v === "function" ? v(symBundle.consecutiveRed)    : v }), [activeSymbol, onSetWorkflowPatch, symBundle.consecutiveRed]);
+  const setSymWorkflowDone      = useCallback(v => onSetWorkflowPatch(activeSymbol, { workflowDone:      typeof v === "function" ? v(symBundle.workflowDone)      : v }), [activeSymbol, onSetWorkflowPatch, symBundle.workflowDone]);
   const setSymFallbackTriggered = useCallback(v => onSetWorkflowPatch(activeSymbol, { fallbackTriggered: typeof v === "function" ? v(symBundle.fallbackTriggered) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.fallbackTriggered]);
-  const setSymStagePnl          = useCallback(v => onSetWorkflowPatch(activeSymbol, { stagePnl: typeof v === "function" ? v(symBundle.stagePnl) : v }), [activeSymbol, onSetWorkflowPatch, symBundle.stagePnl]);
+  const setSymStagePnl          = useCallback(v => onSetWorkflowPatch(activeSymbol, { stagePnl:          typeof v === "function" ? v(symBundle.stagePnl)          : v }), [activeSymbol, onSetWorkflowPatch, symBundle.stagePnl]);
   const setSymOrderMode         = useCallback(mode => onSetOrderModeChange(activeSymbol, mode), [activeSymbol, onSetOrderModeChange]);
 
-  // KI011: on symbol change — notify Dashboard, reset timeframe
+  // ── Phase 6d: derive active symbol's strategy settings ───────────────────
+  const symStrategy         = setStrategySettings?.[activeSymbol] || {};
+  const symActiveStrategy   = symStrategy.activeStrategy   || "off";
+  const symAutoExecute      = symStrategy.autoExecute      ?? false;
+  const symStrategyDuration = symStrategy.strategyDuration ?? null;
+
+  // Strategy setters — patch only the active symbol's slice
+  const handleSymStrategyChange  = useCallback(v => onSetStrategyChange(activeSymbol, { activeStrategy:   v }), [activeSymbol, onSetStrategyChange]);
+  const handleSymAutoExecChange  = useCallback(v => onSetStrategyChange(activeSymbol, { autoExecute:      v }), [activeSymbol, onSetStrategyChange]);
+  const handleSymDurationChange  = useCallback(v => onSetStrategyChange(activeSymbol, { strategyDuration: v }), [activeSymbol, onSetStrategyChange]);
+
+  // ── Symbol change: notify Dashboard, reset timeframe ─────────────────────
   const handleSymbolChange = (sym) => {
     setActiveSymbol(sym);
     setTimeframe("1D");
@@ -368,11 +355,11 @@ export default function SetMarket({
       return result;
     }
     if (result?.trade) {
-      pushEvent({ type: "buy", symbol: order.symbol, price: order.price, detail: `${order.strategy || activeStrategy} × ${order.qty}` });
-      logTradeToD1({ id: result.trade.id, symbol: order.symbol, market: "set", side: "buy", qty: order.qty, entry_price: order.price, exit_price: null, pnl: null, strategy: order.strategy || activeStrategy, opened_at: new Date().toISOString(), closed_at: null, sim_mode: 1 });
+      pushEvent({ type: "buy", symbol: order.symbol, price: order.price, detail: `${order.strategy || symActiveStrategy} × ${order.qty}` });
+      logTradeToD1({ id: result.trade.id, symbol: order.symbol, market: "set", side: "buy", qty: order.qty, entry_price: order.price, exit_price: null, pnl: null, strategy: order.strategy || symActiveStrategy, opened_at: new Date().toISOString(), closed_at: null, sim_mode: 1 });
     }
     return result;
-  }, [handleBuy, activeStrategy]);
+  }, [handleBuy, symActiveStrategy]);
 
   const handleStrategySell = useCallback(async (positionId, price) => {
     const setPos   = (portfolio?.positions || []).filter(p => p.market === "set" && p.symbol === activeSymbol);
@@ -387,10 +374,10 @@ export default function SetMarket({
     const pnlSign = result.totalPnl >= 0 ? "+" : "";
     pushEvent({ type: "sell", symbol: activeSymbol, price: price || currentPrice, detail: `Strategy sold ${totalQty} shares FIFO | Avg entry ฿${result.avgEntryPrice?.toFixed(2)} | P&L: ${pnlSign}฿${Math.round(result.totalPnl)?.toLocaleString()}`, pnl: result.totalPnl });
     result.closedTrades.forEach(t => {
-      logTradeToD1({ id: t.id, symbol: t.symbol, market: "set", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price || currentPrice, pnl: t.pnl, strategy: t.strategy || activeStrategy, opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
+      logTradeToD1({ id: t.id, symbol: t.symbol, market: "set", side: "sell", qty: t.qty, entry_price: t.entryPrice, exit_price: price || currentPrice, pnl: t.pnl, strategy: t.strategy || symActiveStrategy, opened_at: t.openedAt, closed_at: t.closedAt, sim_mode: 1 });
     });
     setSessionLoaded(false);
-  }, [portfolio, currentPrice, activeSymbol, activeStrategy]);
+  }, [portfolio, currentPrice, activeSymbol, symActiveStrategy]);
 
   function handleSellDesk() {
     const qty   = parseFloat(sellQty);
@@ -464,8 +451,8 @@ export default function SetMarket({
       {/* ── Main Body ── */}
       <div className="market-body">
 
-        {/* Watchlist */}
-      <div className={`panel-watchlist ${watchlistCollapsed ? "panel-watchlist--collapsed" : ""}`}>
+        {/* Watchlist — collapsible */}
+        <div className={`panel-watchlist ${watchlistCollapsed ? "panel-watchlist--collapsed" : ""}`}>
           <button
             className="wl-collapse-btn"
             onClick={() => setWatchlistCollapsed(v => !v)}
@@ -538,14 +525,8 @@ export default function SetMarket({
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div className="pos-view-toggle">
-                  <button
-                    className={`pos-view-btn ${posView === "active" ? "active" : ""}`}
-                    onClick={() => setPosView("active")}
-                  >Active</button>
-                  <button
-                    className={`pos-view-btn ${posView === "all" ? "active" : ""}`}
-                    onClick={() => { setPosView("all"); loadSessionClosed(); }}
-                  >All Session</button>
+                  <button className={`pos-view-btn ${posView === "active" ? "active" : ""}`} onClick={() => setPosView("active")}>Active</button>
+                  <button className={`pos-view-btn ${posView === "all" ? "active" : ""}`} onClick={() => { setPosView("all"); loadSessionClosed(); }}>All Session</button>
                 </div>
                 <button className="panel3-collapse-btn" onClick={() => setPanel3Collapsed(v => !v)}>
                   {panel3Collapsed ? "▲ Show" : "▼ Hide"}
@@ -560,10 +541,8 @@ export default function SetMarket({
                 <div className="panel-bottom-zone positions-zone pz-unified">
                   {(() => {
                     const openRows   = setPositions.map(pos => ({ ...pos, _rowType: "open" }));
-                    const closedRows = posView === "all"
-                      ? sessionClosed.map(t => ({ ...t, _rowType: "closed" }))
-                      : [];
-                    const allRows = [...openRows, ...closedRows];
+                    const closedRows = posView === "all" ? sessionClosed.map(t => ({ ...t, _rowType: "closed" })) : [];
+                    const allRows    = [...openRows, ...closedRows];
 
                     if (posView === "all" && sessionLoading) {
                       return <div className="empty-state">⏳ Loading last 12 hours...</div>;
@@ -628,7 +607,7 @@ export default function SetMarket({
                   })()}
                 </div>
 
-                {/* Sell Desk — pinned, never inside scroll zone */}
+                {/* Sell Desk — pinned below scroll zone */}
                 {(() => {
                   const symPos    = setPositions.filter(p => p.symbol === activeSymbol);
                   const totalHeld = symPos.reduce((s, p) => s + p.qty, 0);
@@ -642,38 +621,24 @@ export default function SetMarket({
                   const pnlColor  = totalPnl >= 0 ? "pnl-up" : "pnl-down";
                   return (
                     <div className="sell-desk sell-desk--collapsible sell-desk--pinned">
-                      <button
-                        className="sell-desk-summary-line"
-                        onClick={() => setSellDeskOpen(v => !v)}
-                      >
+                      <button className="sell-desk-summary-line" onClick={() => setSellDeskOpen(v => !v)}>
                         <span className="sdsl-symbol">{activeSymbol?.replace(".BK","")}</span>
                         <span className="sdsl-sep">—</span>
                         <span className="sdsl-qty"><strong>{totalHeld?.toLocaleString()}</strong> shares</span>
                         <span className="sdsl-sep">|</span>
                         <span className="sdsl-avg">Avg ฿{totalHeld > 0 ? avgEntry?.toFixed(2) : "—"}</span>
                         <span className="sdsl-sep">|</span>
-                        <span className={`sdsl-pnl ${pnlColor}`}>
-                          P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}
-                        </span>
+                        <span className={`sdsl-pnl ${pnlColor}`}>P&L: {totalPnl >= 0 ? "+" : ""}฿{Math.round(totalPnl)?.toLocaleString()}</span>
                         <span className="sdsl-cta">{sellDeskOpen ? "▲ Close" : "▼ Sell"}</span>
                       </button>
                       {sellDeskOpen && (
                         <div className="sell-desk-body">
                           {totalHeld === 0 ? (
-                            <div className="empty-state" style={{ fontSize: "11px", padding: "4px 0" }}>
-                              Switch to the active symbol to sell.
-                            </div>
+                            <div className="empty-state" style={{ fontSize: "11px", padding: "4px 0" }}>Switch to the active symbol to sell.</div>
                           ) : (
                             <>
                               <div className="sell-desk-controls">
-                                <input
-                                  type="number"
-                                  className="sell-desk-input"
-                                  value={sellQty}
-                                  onChange={e => setSellQty(e.target.value)}
-                                  placeholder={`Qty (max ${totalHeld?.toLocaleString()})`}
-                                  min={100} max={totalHeld} step={100}
-                                />
+                                <input type="number" className="sell-desk-input" value={sellQty} onChange={e => setSellQty(e.target.value)} placeholder={`Qty (max ${totalHeld?.toLocaleString()})`} min={100} max={totalHeld} step={100} />
                                 <button className="sell-desk-all-btn"  onClick={() => setSellQty(String(totalHeld))}>All</button>
                                 <button className="sell-desk-half-btn" onClick={() => setSellQty(String(Math.floor(totalHeld / 200) * 100 || 100))}>Half</button>
                               </div>
@@ -682,11 +647,7 @@ export default function SetMarket({
                                   Sell {sellN?.toLocaleString()} shares → Est. {pnlUp ? "profit" : "loss"}: {pnlUp ? "+" : ""}฿{Math.round(estPnl)?.toLocaleString()}
                                 </div>
                               )}
-                              <button
-                                className="sell-desk-btn"
-                                onClick={handleSellDesk}
-                                disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}
-                              >
+                              <button className="sell-desk-btn" onClick={handleSellDesk} disabled={!sellQty || parseFloat(sellQty) <= 0 || parseFloat(sellQty) > totalHeld}>
                                 ▼ SELL {sellQty ? parseInt(sellQty)?.toLocaleString() : "?"} SHARES @ MARKET
                               </button>
                             </>
@@ -697,7 +658,6 @@ export default function SetMarket({
                   );
                 })()}
 
-                {/* Activity log placeholder */}
                 <div className="activity-log-placeholder">
                   📋 Activity log available in D1 Panel (coming soon)
                 </div>
@@ -709,7 +669,6 @@ export default function SetMarket({
 
         {/* Right column */}
         <div className="panel-controls">
-          {/* KI011: pass derived per-symbol props to OrderPanel */}
           <OrderPanel
             market="set"
             currentPrice={currentPrice}
@@ -726,15 +685,16 @@ export default function SetMarket({
             onLogActivity={onActivityEvent}
             aiWorkflowActive={symWorkflowActive}
             workflowSymbol={symBundle.workflow?.symbol || null}
-            workflow={symBundle.workflow}          setWorkflow={setSymWorkflow}
-            stageStatuses={symBundle.stageStatuses} setStageStatuses={setSymStageStatuses}
-            activeStageIdx={symBundle.activeStageIdx} setActiveStageIdx={setSymActiveStageIdx}
-            consecutiveRed={symBundle.consecutiveRed} setConsecutiveRed={setSymConsecutiveRed}
-            workflowDone={symBundle.workflowDone}   setWorkflowDone={setSymWorkflowDone}
+            workflow={symBundle.workflow}              setWorkflow={setSymWorkflow}
+            stageStatuses={symBundle.stageStatuses}   setStageStatuses={setSymStageStatuses}
+            activeStageIdx={symBundle.activeStageIdx}  setActiveStageIdx={setSymActiveStageIdx}
+            consecutiveRed={symBundle.consecutiveRed}  setConsecutiveRed={setSymConsecutiveRed}
+            workflowDone={symBundle.workflowDone}      setWorkflowDone={setSymWorkflowDone}
             fallbackTriggered={symBundle.fallbackTriggered} setFallbackTriggered={setSymFallbackTriggered}
-            stagePnl={symBundle.stagePnl}           setStagePnl={setSymStagePnl}
+            stagePnl={symBundle.stagePnl}              setStagePnl={setSymStagePnl}
           />
 
+          {/* Phase 6d: StrategyPanel gets per-symbol strategy settings */}
           {symOrderMode === "manual" && (
             <StrategyPanel
               market="set"
@@ -742,12 +702,12 @@ export default function SetMarket({
               priceHistory={priceHistory}
               currentPrice={currentPrice}
               portfolio={portfolio}
-              activeStrategy={activeStrategy}
-              onStrategyChange={onStrategyChange}
-              autoExecute={autoExecute}
-              onAutoExecuteChange={onAutoExecuteChange}
-              strategyDuration={strategyDuration}
-              onStrategyDurationChange={onStrategyDurationChange}
+              activeStrategy={symActiveStrategy}
+              onStrategyChange={handleSymStrategyChange}
+              autoExecute={symAutoExecute}
+              onAutoExecuteChange={handleSymAutoExecChange}
+              strategyDuration={symStrategyDuration}
+              onStrategyDurationChange={handleSymDurationChange}
               onExecuteBuy={handleStrategyBuy}
               onExecuteSell={handleStrategySell}
               onStrategyEvent={handleStrategyEvent}
