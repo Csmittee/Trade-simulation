@@ -1,14 +1,20 @@
 /**
  * tts-workers — Cloudflare Worker (single file, all routes)
- * GET  /api/gold              — XAUUSD + Thai baht gold price
- * GET  /api/history           — Historical OHLC for chart (GC=F or SET symbol)
- * GET  /api/set?symbol=PTT.BK — Yahoo Finance proxy for SET/MAI stocks (15-min delayed)
- * GET  /api/portfolio         — read portfolio state from KV
- * POST /api/portfolio         — write portfolio state to KV
- * GET  /api/settings?key=     — read a settings key from KV
- * POST /api/settings          — write a settings key to KV
- * POST /api/trades            — log a completed trade to D1 (Phase 3)
- * GET  /api/trades            — fetch trade history from D1 (Phase 3)
+ * GET  /api/gold                — XAUUSD + Thai baht gold price
+ * GET  /api/history             — Historical OHLC for chart (GC=F or SET symbol)
+ * GET  /api/set?symbol=PTT.BK  — Yahoo Finance proxy for SET/MAI stocks (15-min delayed)
+ * GET  /api/portfolio           — read portfolio state from KV
+ * POST /api/portfolio           — write portfolio state to KV
+ * GET  /api/settings?key=       — read a settings key from KV
+ * POST /api/settings            — write a settings key to KV
+ * POST /api/trades              — log a completed trade to D1
+ * GET  /api/trades              — fetch trade history from D1
+ *   params: market, symbol, side, from, hours, open, executor, trash, limit
+ * GET  /api/trades/summary      — P&L grouped by day/week/month
+ * GET  /api/trades/count        — total counts (total, buys, sells, ghost buys)
+ * GET  /api/logs                — fetch activity_log from D1
+ * POST /api/logs                — insert activity log event to D1
+ * GET  /api/debug               — connectivity test
  *
  * KV binding: TTS_KV — Cloudflare Worker → Settings → Variables → KV Namespace Bindings
  * D1 binding: TTS_DB — Cloudflare Worker → Settings → Variables → D1 Database Bindings
@@ -35,13 +41,17 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
     const url = new URL(request.url);
-    if (url.pathname === "/api/gold")      return handleGold(request, env);
-    if (url.pathname === "/api/history")   return handleHistory(request, env);
-    if (url.pathname === "/api/set")       return handleSet(request, env);
-    if (url.pathname === "/api/portfolio") return handlePortfolio(request, env);
-    if (url.pathname === "/api/settings")  return handleSettings(request, env);
-    if (url.pathname === "/api/trades")    return handleTrades(request, env);
-    if (url.pathname === "/api/debug")     return handleDebug(request, env);
+    if (url.pathname === "/api/gold")             return handleGold(request, env);
+    if (url.pathname === "/api/history")          return handleHistory(request, env);
+    if (url.pathname === "/api/set")              return handleSet(request, env);
+    if (url.pathname === "/api/portfolio")        return handlePortfolio(request, env);
+    if (url.pathname === "/api/settings")         return handleSettings(request, env);
+    // New routes BEFORE /api/trades to avoid any prefix ambiguity
+    if (url.pathname === "/api/trades/summary")   return handleTradesSummary(request, env);
+    if (url.pathname === "/api/trades/count")     return handleTradesCount(request, env);
+    if (url.pathname === "/api/trades")           return handleTrades(request, env);
+    if (url.pathname === "/api/logs")             return handleLogs(request, env);
+    if (url.pathname === "/api/debug")            return handleDebug(request, env);
     return jsonResponse({ success: false, error: "Route not found" }, 404);
   },
 };
@@ -344,15 +354,64 @@ async function handleSettings(request, env) {
   return jsonResponse({ success: false, error: "Method not allowed" }, 405);
 }
 
+// ── /api/trades/summary ───────────────────────────────────────────────────────
+// GET  ?group=day|week|month  — P&L summary grouped by date period (sells only)
+async function handleTradesSummary(request, env) {
+  if (!env.TTS_DB) return jsonResponse({ success: false, error: "D1 not configured" }, 503);
+  try {
+    const url   = new URL(request.url);
+    const group = url.searchParams.get("group") || "day";
+
+    const dateFn =
+      group === "month" ? "strftime('%Y-%m', closed_at)"
+      : group === "week" ? "strftime('%Y-W%W', closed_at)"
+      : "DATE(closed_at)";
+
+    const { results } = await env.TTS_DB.prepare(`
+      SELECT
+        ${dateFn} as period,
+        COUNT(*) as trades,
+        ROUND(SUM(pnl), 2) as total_pnl,
+        SUM(CASE WHEN pnl > 0  THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN pnl <= 0 THEN 1 ELSE 0 END) as losses
+      FROM trades
+      WHERE side = 'sell' AND pnl IS NOT NULL AND closed_at IS NOT NULL
+      GROUP BY ${dateFn}
+      ORDER BY period DESC
+      LIMIT 90
+    `).all();
+
+    return jsonResponse({ success: true, count: results.length, data: results });
+  } catch (err) {
+    return jsonResponse({ success: false, error: err.message, data: [] }, 500);
+  }
+}
+
+// ── /api/trades/count ─────────────────────────────────────────────────────────
+// GET  — total trade counts (use for Confirm Reset verification)
+async function handleTradesCount(request, env) {
+  if (!env.TTS_DB) return jsonResponse({ success: false, error: "D1 not configured" }, 503);
+  try {
+    const { results } = await env.TTS_DB.prepare(`
+      SELECT
+        COUNT(*) as total_trades,
+        COUNT(CASE WHEN side = 'buy'  THEN 1 END) as buys,
+        COUNT(CASE WHEN side = 'sell' THEN 1 END) as sells,
+        COUNT(CASE WHEN side = 'buy' AND exit_price IS NULL THEN 1 END) as open_buys
+      FROM trades
+    `).all();
+    return jsonResponse({ success: true, data: results[0] });
+  } catch (err) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
 // ── /api/trades ───────────────────────────────────────────────────────────────
 // POST — log a trade (called when a strategy-executed trade closes)
-// GET  — fetch trade history (limit, market, symbol filters supported)
-//
-// D1 binding: TTS_DB (set up in Cloudflare Worker settings)
-// Table: trades — see masterseed.md Phase 3 for CREATE TABLE statement
+// GET  — fetch trade history
+//   params: market, symbol, side, from, hours, open, executor, trash, limit
 async function handleTrades(request, env) {
   if (!env.TTS_DB) {
-    // Graceful fallback if D1 not yet configured
     return jsonResponse({ success: false, error: "D1 not configured. Add TTS_DB binding in Worker settings." }, 503);
   }
 
@@ -392,20 +451,118 @@ async function handleTrades(request, env) {
     }
   }
 
-  // GET — fetch trade history
+  // GET — fetch trade history with extended filter params
   if (request.method === "GET") {
     try {
-      const url    = new URL(request.url);
-      const market = url.searchParams.get("market") || null;
-      const symbol = url.searchParams.get("symbol") || null;
-      const limit  = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 500);
+      const url      = new URL(request.url);
+      const market   = url.searchParams.get("market")   || null;
+      const symbol   = url.searchParams.get("symbol")   || null;
+      const side     = url.searchParams.get("side")     || null;
+      const from     = url.searchParams.get("from")     || null;
+      const hours    = parseInt(url.searchParams.get("hours") || "0", 10);
+      const openOnly = url.searchParams.get("open")     === "true";
+      const trash    = url.searchParams.get("trash")    === "true";
+      const executor = url.searchParams.get("executor") || null;
+      const limit    = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 500);
 
-      let query  = "SELECT * FROM trades WHERE 1=1";
+      let query    = "SELECT * FROM trades WHERE 1=1";
       const params = [];
 
       if (market) { query += " AND market = ?"; params.push(market); }
       if (symbol) { query += " AND symbol = ?"; params.push(symbol); }
+
+      if (side === "buy" || side === "sell") {
+        query += " AND side = ?"; params.push(side);
+      }
+
+      // Date filter: explicit `from` takes priority over `hours` rolling window
+      if (from) {
+        query += " AND opened_at >= ?"; params.push(from);
+      } else if (hours > 0) {
+        const cutoff = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+        query += " AND opened_at >= ?"; params.push(cutoff);
+      }
+
+      if (openOnly) {
+        query += " AND side = 'buy' AND (exit_price IS NULL OR closed_at IS NULL)";
+      }
+
+      if (trash) {
+        query += " AND (symbol IS NULL OR market IS NULL OR qty IS NULL OR entry_price IS NULL OR opened_at IS NULL)";
+      }
+
+      if (executor === "manual") {
+        query += " AND strategy = 'manual'";
+      } else if (executor === "preset") {
+        query += " AND strategy != 'manual' AND strategy NOT LIKE 'ai_%'";
+      } else if (executor === "ai") {
+        query += " AND (strategy LIKE 'ai_%' OR strategy = 'ai_workflow')";
+      }
+
       query += " ORDER BY opened_at DESC LIMIT ?";
+      params.push(limit);
+
+      const { results } = await env.TTS_DB.prepare(query).bind(...params).all();
+      return jsonResponse({ success: true, count: results.length, data: results });
+    } catch (err) {
+      return jsonResponse({ success: false, error: err.message, data: [] }, 500);
+    }
+  }
+
+  return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+}
+
+// ── /api/logs ─────────────────────────────────────────────────────────────────
+// POST — insert activity log event (called from Dashboard on every trade event)
+// GET  — fetch activity_log rows
+//   params: hours (rolling window), from (date), before (pagination), type, limit
+async function handleLogs(request, env) {
+  if (!env.TTS_DB) return jsonResponse({ success: false, error: "D1 not configured" }, 503);
+
+  // POST — insert a log event
+  if (request.method === "POST") {
+    try {
+      const body = await request.json();
+      const { type, market, message, detail, logged_at } = body;
+      await env.TTS_DB.prepare(`
+        INSERT INTO activity_log (type, market, message, detail, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(
+        type      || "info",
+        market    || "system",
+        message   || "",
+        detail    || "",
+        logged_at || new Date().toISOString()
+      ).run();
+      return jsonResponse({ success: true });
+    } catch (err) {
+      return jsonResponse({ success: false, error: err.message }, 500);
+    }
+  }
+
+  // GET — fetch log events
+  if (request.method === "GET") {
+    try {
+      const url    = new URL(request.url);
+      const from   = url.searchParams.get("from")   || null;
+      const before = url.searchParams.get("before") || null;
+      const type   = url.searchParams.get("type")   || null;
+      const limit  = Math.min(parseInt(url.searchParams.get("limit") || "200", 10), 500);
+      const hours  = parseInt(url.searchParams.get("hours") || "12", 10);
+
+      // `from` date string takes priority over rolling `hours` window
+      const cutoff = from
+        ? `${from}T00:00:00.000Z`
+        : new Date(Date.now() - hours * 3600 * 1000).toISOString();
+
+      // Alias created_at as logged_at to match Dashboard.jsx field expectations
+      let query    = "SELECT id, type, market, message, detail, created_at as logged_at FROM activity_log WHERE created_at >= ?";
+      const params = [cutoff];
+
+      if (before) { query += " AND created_at < ?"; params.push(before); }
+      if (type)   { query += " AND type = ?";       params.push(type); }
+
+      query += " ORDER BY created_at DESC LIMIT ?";
       params.push(limit);
 
       const { results } = await env.TTS_DB.prepare(query).bind(...params).all();
