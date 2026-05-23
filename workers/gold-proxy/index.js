@@ -14,6 +14,7 @@
  * GET  /api/trades/count        — total counts (total, buys, sells, ghost buys)
  * GET  /api/logs                — fetch activity_log from D1
  * POST /api/logs                — insert activity log event to D1
+ * POST /api/strategy            — AI strategy advisor (Anthropic API)
  * GET  /api/debug               — connectivity test
  *
  * KV binding: TTS_KV — Cloudflare Worker → Settings → Variables → KV Namespace Bindings
@@ -51,6 +52,7 @@ export default {
     if (url.pathname === "/api/trades/count")     return handleTradesCount(request, env);
     if (url.pathname === "/api/trades")           return handleTrades(request, env);
     if (url.pathname === "/api/logs")             return handleLogs(request, env);
+    if (url.pathname === "/api/strategy")         return handleStrategy(request, env);
     if (url.pathname === "/api/debug")            return handleDebug(request, env);
     return jsonResponse({ success: false, error: "Route not found" }, 404);
   },
@@ -573,6 +575,36 @@ async function handleLogs(request, env) {
   }
 
   return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+}
+
+// ── /api/strategy ─────────────────────────────────────────────────────────────
+// POST — AI strategy advisor for Portfolio Zone 3 (proxies Anthropic API)
+async function handleStrategy(request, env) {
+  if (request.method !== "POST") return jsonResponse({ success: false, error: "POST only" }, 405);
+  if (!env.ANTHROPIC_API_KEY) return jsonResponse({ success: false, error: "ANTHROPIC_API_KEY not configured" }, 503);
+  try {
+    const body = await request.json();
+    const { prompt } = body;
+    if (!prompt) return jsonResponse({ success: false, error: "prompt required" }, 400);
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    const data = await res.json();
+    const text = data?.content?.[0]?.text || "";
+    return jsonResponse({ success: true, data: text });
+  } catch (err) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
 }
 
 // ── /api/debug ────────────────────────────────────────────────────────────────
