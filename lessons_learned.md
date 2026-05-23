@@ -289,6 +289,20 @@ Prompt says "plain text NO JSON, 3 sentences only". Parser extracts `reasoning` 
 
 ---
 
+## PHASE 7a — Grouped Positions Table
+
+### L078 — Active vs All Session Views Need Separate Rendering Paths
+**Pattern:** When a view toggle switches between two fundamentally different display modes (grouped vs flat), use a single IIFE with an early-return branch per mode rather than conditional JSX at the component level. Keeps the scroll container consistent and avoids key-collision between the two render trees.
+**Rule:** `if (posView === "all") { return flatTable; } return groupedTable;` inside the positions-zone IIFE.
+**Tag:** #positions #ux #phase7a
+
+### L079 — Expand Button Must stopPropagation to Avoid Triggering Parent onClick
+**Problem:** A `▶/▼` expand button inside a clickable row will fire both the button's onClick and the row's onClick (symbol switch) if stopPropagation is missing.
+**Rule:** Always call `e.stopPropagation()` in the expand button handler when the parent div has its own onClick.
+**Tag:** #ux #events #phase7a
+
+---
+
 ## KNOWN ISSUES LOG
 
 | ID | Issue | Status | Phase Found |

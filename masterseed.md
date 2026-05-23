@@ -74,6 +74,7 @@
 | 6 | Bottom panel redesign + 6-fix sprint + workflow split (14 states) + Battlefield Gantt | ✅ COMPLETE |
 | 6b | AI workflow split (14 states) + per-symbol SET workflow dict (KI011 fix) | ✅ COMPLETE |
 | 6d | Per-symbol SET preset strategy + Portfolio black screen fix | 🔴 BROKEN — CC to fix |
+| 7a | Grouped positions table in SET tab (Active view) | ✅ COMPLETE |
 | 7 | Portfolio Battlefield — AI advisor sync to Gold/SET + executable plan | ⬜ NOT STARTED |
 | 8 | SET selection UX overhaul (watchlist, buy list, better graph, search) | ⬜ BACKLOG |
 | 9 | D1 Tab — deep log viewer + manual adjustment interface | ⬜ BACKLOG |
@@ -175,7 +176,7 @@ index.js    routes: /api/gold, /api/history, /api/set,
         ├── Dashboard.jsx       ⚠️ Phase 6d partial — setStrategySettings state added,
         │                          verify setStrategySettings flows to SetMarket + Portfolio
         ├── GoldMarket.jsx      ✅ Working
-        ├── SetMarket.jsx       ⚠️ Phase 6d partial — verify per-symbol strategy derivation
+        ├── SetMarket.jsx       ✅ Phase 7a — grouped positions Active view (expandedGroups, positionGroups, toggleGroup)
         └── Portfolio.jsx       ⚠️ Phase 6d partial — verify setStrategySettings prop threading
 ```
 
