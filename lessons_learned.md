@@ -330,6 +330,34 @@ Prompt says "plain text NO JSON, 3 sentences only". Parser extracts `reasoning` 
 
 ---
 
+## PHASE 8 — D1 Query Builder Tab
+
+### L084 — SQL Generator Tabs Need No Props, No Worker Routes
+**Pattern:** A SQL-builder tab that generates text for users to copy needs zero backend changes. All state is local (`useState`). No `useEffect`, no fetch, no new Worker routes. The component is a pure function of UI state.
+**Rule:** If a feature generates text/code for the user rather than executing it, keep all state local. Don't route through the Worker or KV.
+**Tag:** #d1 #architecture #phase8
+
+### L085 — Copy-to-Clipboard Pattern: setCopied → setTimeout Reset
+**Pattern:**
+```js
+navigator.clipboard.writeText(text).then(() => {
+  setCopied(true);
+  setTimeout(() => setCopied(false), 2000);
+});
+```
+Button swaps class `.success` and label to "Copied ✓" for 2 seconds, then reverts.
+**Tag:** #ux #clipboard #phase8
+
+### L086 — Date Helpers for SQL: today() and daysAgo(n)
+Keep date helpers as module-level functions, not inside the component. Both return `YYYY-MM-DD` strings (ISO slice). Avoids re-creation on every render and keeps SQL builder functions pure.
+```js
+const today   = () => new Date().toISOString().slice(0, 10);
+const daysAgo = n  => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+```
+**Tag:** #d1 #dates #phase8
+
+---
+
 ## KNOWN ISSUES LOG
 
 | ID | Issue | Status | Phase Found |

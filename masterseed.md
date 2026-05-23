@@ -1,6 +1,6 @@
 # 🌱 MASTERSEED — Thai Trading Simulator (TTS)
 > Resume any new chat or CC session from this file. Always read `lessons_learned.md` too.
-> **Last Updated:** 2026-05-23 — Phase 7b complete. Per-lane own scale + curated KV watchlist. No broken state.
+> **Last Updated:** 2026-05-23 — Phase 8 complete. D1 Query Builder tab added. No broken state.
 
 ---
 
@@ -76,8 +76,9 @@
 | 6d | Per-symbol SET preset strategy + Portfolio black screen fix | ✅ COMPLETE |
 | 7a | Grouped positions table in SET tab (Active view) | ✅ COMPLETE |
 | 7b | Per-lane own scale ruler + curated KV watchlist | ✅ COMPLETE |
+| 8  | D1 Query Builder tab — click-to-generate SQL | ✅ COMPLETE |
 | 7 | Portfolio Battlefield — AI advisor sync to Gold/SET + executable plan | ⬜ NOT STARTED |
-| 8 | SET selection UX overhaul (watchlist, buy list, better graph, search) | ⬜ BACKLOG |
+| 9 | SET selection UX overhaul (watchlist, buy list, better graph, search) | ⬜ BACKLOG |
 | 9 | D1 Tab — deep log viewer + manual adjustment interface | ⬜ BACKLOG |
 | 10 | Bitcoin/Crypto tab | ⬜ BACKLOG |
 | 11 | Long-term dividend portfolio summary | ⬜ BACKLOG |
@@ -151,7 +152,8 @@ index.js    routes: /api/gold, /api/history, /api/set,
     │   ├── intel-injector.js   ✅ Hover intel for symbols
     │   └── portfolio-injector.js ✅ Phase 7b — computePerLaneScale, computeSharedOwnRuler, computeUniqueLanes
     └── pages/
-        ├── Dashboard.jsx       ✅ Phase 7b — userWatchlist state + KV + handleAddToWatchlist/handleRemoveFromWatchlist
+        ├── Dashboard.jsx       ✅ Phase 8 — D1Tab import, 4th tab entry, D1Tab render
+        ├── D1Tab.jsx           ✅ Phase 8 — new file, 8 SQL query types, copy to clipboard
         ├── GoldMarket.jsx      ✅ Working
         ├── SetMarket.jsx       ✅ Phase 7b — curated watchlist panel, watchlistCollapsed=true, new props
         └── Portfolio.jsx       ✅ Phase 7b — per-lane own scale (visibleLanesOwn, bf2-per-lane-ruler)
@@ -165,8 +167,8 @@ index.js    routes: /api/gold, /api/history, /api/set,
 |---|---|---|---|
 | 1 | 7 | Portfolio AI generates executable plan synced to Gold/SET tabs | |
 | 2 | 7c | Click position row → auto-switch symbol + fill buy price | activeSymbol set + OrderPanel price pre-filled |
-| 3 | 8 | SET selection UX overhaul | Better live graph, enhanced watchlist |
-| 4 | 9 | D1 Tab — deep log viewer + adjustment interface | Browse all D1 logs, manual correction |
+| 3 | 9 | SET selection UX overhaul | Better live graph, enhanced watchlist |
+| 4 | 8b | D1 Tab — live log viewer (read from Worker) | Extend D1Tab to fetch and display recent logs |
 | 5 | 10 | Bitcoin/Crypto tab | Follow platform strategy |
 | 6 | 11 | Long-term dividend portfolio summary | Stocks held for dividend, annual financial view |
 | 7 | 12 | Live broker API connection | Real buy/sell — validation gate required before this phase |
