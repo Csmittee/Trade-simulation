@@ -1,6 +1,6 @@
 # 🌱 MASTERSEED — Thai Trading Simulator (TTS)
 > Resume any new chat or CC session from this file. Always read `lessons_learned.md` too.
-> **Last Updated:** 2026-05-23 — Transition to Claude Code (CC) model. Phase 6d incomplete (portfolio black screen). CC is now the primary coder. Chat is project management only.
+> **Last Updated:** 2026-05-23 — Phase 7b complete. Per-lane own scale + curated KV watchlist. No broken state.
 
 ---
 
@@ -73,8 +73,9 @@
 | 5 | Session persistence + Activity D1 log + KV optimization | ✅ COMPLETE |
 | 6 | Bottom panel redesign + 6-fix sprint + workflow split (14 states) + Battlefield Gantt | ✅ COMPLETE |
 | 6b | AI workflow split (14 states) + per-symbol SET workflow dict (KI011 fix) | ✅ COMPLETE |
-| 6d | Per-symbol SET preset strategy + Portfolio black screen fix | 🔴 BROKEN — CC to fix |
+| 6d | Per-symbol SET preset strategy + Portfolio black screen fix | ✅ COMPLETE |
 | 7a | Grouped positions table in SET tab (Active view) | ✅ COMPLETE |
+| 7b | Per-lane own scale ruler + curated KV watchlist | ✅ COMPLETE |
 | 7 | Portfolio Battlefield — AI advisor sync to Gold/SET + executable plan | ⬜ NOT STARTED |
 | 8 | SET selection UX overhaul (watchlist, buy list, better graph, search) | ⬜ BACKLOG |
 | 9 | D1 Tab — deep log viewer + manual adjustment interface | ⬜ BACKLOG |
@@ -84,33 +85,9 @@
 
 ---
 
-## CURRENT BROKEN STATE (2026-05-23)
+## CURRENT BROKEN STATE
 
-### ❌ Portfolio tab — black screen
-**Error:** `Uncaught ReferenceError: Cannot access 'P' before initialization`
-**Root cause:** Phase 6d patch was applied manually by owner and broke the `computeUniqueLanes` function in `portfolio-injector.js`. A conditional `else if / else` chain was partially replaced — middle branch was orphaned, creating a JS initialization error at runtime.
-
-**Files modified in Phase 6d (all 4 need CC verification + possible rewrite):**
-- `src/injectors/portfolio-injector.js` — PRIMARY BROKEN FILE
-- `src/pages/Portfolio.jsx` — prop threading added, may be incomplete
-- `src/pages/Dashboard.jsx` — `setStrategySettings` state added, may be incomplete
-- `src/pages/SetMarket.jsx` — strategy props refactored, may be incomplete
-
-**What Phase 6d was trying to do:**
-Each SET symbol should have independent preset strategy state `{ activeStrategy, autoExecute, strategyDuration }` stored in `setStrategySettings` dict in Dashboard (same pattern as KI011 AI workflow dict). Gold preset strategy remains global.
-
-**Data structure (already in Dashboard — DO NOT change):**
-```js
-const [setStrategySettings, setSetStrategySettings] = useState({});
-// shape: { "PTT.BK": { activeStrategy, autoExecute, strategyDuration }, ... }
-```
-
-**Fix logic for `computeUniqueLanes`:**
-- For each lane: if active AI workflow → use workflow label (unchanged)
-- Else if Gold lane → use global `activeStrategy` / `strategyDuration`
-- Else (SET lane) → use `setStrategySettings[lane.symbol]?.activeStrategy` / `?.strategyDuration`
-- `strategyExpired` and `ownScaleEndMs` must use per-symbol duration for SET lanes
-- Remove global `const strategyName` / `const durationMs` — compute per-lane instead
+✅ No broken state as of Phase 7b (2026-05-23).
 
 ---
 
@@ -128,8 +105,9 @@ const [setStrategySettings, setSetStrategySettings] = useState({});
 | OrderPanel.jsx | ✅ Working (no changes needed) |
 | StrategyPanel.jsx | ✅ Working (no changes needed) |
 | dashboard.css — watchlist collapse styles | ✅ Working |
-| Portfolio Battlefield Zone 1/2/3 | ⚠️ Broken by Phase 6d — fix restores |
-| Portfolio own-scale Gantt | ⚠️ Broken by Phase 6d — fix restores |
+| Portfolio Battlefield Zone 1/2/3 | ✅ Working |
+| Portfolio own-scale Gantt — per-lane independent ruler | ✅ Working (Phase 7b) |
+| SET curated watchlist (My Watchlist pinned section) | ✅ Working (Phase 7b) |
 
 ---
 
@@ -171,13 +149,12 @@ index.js    routes: /api/gold, /api/history, /api/set,
     │   ├── set-injector.js     ✅ SET watchlist + history + SL/TP auto-close
     │   ├── strategy-injector.js ✅ All 5 strategy signal engines
     │   ├── intel-injector.js   ✅ Hover intel for symbols
-    │   └── portfolio-injector.js ❌ BROKEN — computeUniqueLanes has orphaned conditional
+    │   └── portfolio-injector.js ✅ Phase 7b — computePerLaneScale, computeSharedOwnRuler, computeUniqueLanes
     └── pages/
-        ├── Dashboard.jsx       ⚠️ Phase 6d partial — setStrategySettings state added,
-        │                          verify setStrategySettings flows to SetMarket + Portfolio
+        ├── Dashboard.jsx       ✅ Phase 7b — userWatchlist state + KV + handleAddToWatchlist/handleRemoveFromWatchlist
         ├── GoldMarket.jsx      ✅ Working
-        ├── SetMarket.jsx       ✅ Phase 7a — grouped positions Active view (expandedGroups, positionGroups, toggleGroup)
-        └── Portfolio.jsx       ⚠️ Phase 6d partial — verify setStrategySettings prop threading
+        ├── SetMarket.jsx       ✅ Phase 7b — curated watchlist panel, watchlistCollapsed=true, new props
+        └── Portfolio.jsx       ✅ Phase 7b — per-lane own scale (visibleLanesOwn, bf2-per-lane-ruler)
 ```
 
 ---
@@ -186,15 +163,13 @@ index.js    routes: /api/gold, /api/history, /api/set,
 
 | Priority | Phase | Feature | Notes |
 |---|---|---|---|
-| 1 | 6d | Fix portfolio black screen | CC task — see broken state above |
-| 2 | 6e | Portfolio own-scale per-lane independent timeline | Each lane fills 0–100% of its own span |
-| 3 | 6f | Click position row → auto-switch symbol + fill buy price | activeSymbol set + OrderPanel price pre-filled |
-| 4 | 7 | Portfolio AI generates executable plan synced to Gold/SET tabs | |
-| 5 | 8 | SET selection UX overhaul | Watchlist, buy list, better live graph, search, favorites |
-| 6 | 9 | D1 Tab — deep log viewer + adjustment interface | Browse all D1 logs, manual correction |
-| 7 | 10 | Bitcoin/Crypto tab | Follow platform strategy |
-| 8 | 11 | Long-term dividend portfolio summary | Stocks held for dividend, annual financial view |
-| 9 | 12 | Live broker API connection | Real buy/sell — validation gate required before this phase |
+| 1 | 7 | Portfolio AI generates executable plan synced to Gold/SET tabs | |
+| 2 | 7c | Click position row → auto-switch symbol + fill buy price | activeSymbol set + OrderPanel price pre-filled |
+| 3 | 8 | SET selection UX overhaul | Better live graph, enhanced watchlist |
+| 4 | 9 | D1 Tab — deep log viewer + adjustment interface | Browse all D1 logs, manual correction |
+| 5 | 10 | Bitcoin/Crypto tab | Follow platform strategy |
+| 6 | 11 | Long-term dividend portfolio summary | Stocks held for dividend, annual financial view |
+| 7 | 12 | Live broker API connection | Real buy/sell — validation gate required before this phase |
 
 ---
 

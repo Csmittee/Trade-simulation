@@ -303,6 +303,33 @@ Prompt says "plain text NO JSON, 3 sentences only". Parser extracts `reasoning` 
 
 ---
 
+## PHASE 7b — Per-Lane Own Scale + Curated Watchlist
+
+### L080 — Per-Lane Own Scale: Wrap Track + Ruler in a Column Flex Container
+**Pattern:** In Portfolio Battlefield own-scale mode, wrap the bar track div and the per-lane ruler div together in a `display:flex; flex-direction:column` container inside the lane's flex row. The badge and P&L remain as sibling flex items beside this wrapper. This gives each lane an independent ruler below its own bar without disturbing badge/P&L alignment.
+**Code shape:**
+```jsx
+<div style={{ flex:1, display:"flex", flexDirection:"column" }}>
+  <div className="bf2-lane-track">…bar + nodes…</div>
+  <div className="bf2-per-lane-ruler">…ticks…</div>
+</div>
+```
+**Tag:** #portfolio #battlefield #css #phase7b
+
+### L081 — WatchlistSet Memo Avoids O(n) Membership Checks in Browse List
+**Rule:** When the browse list (up to 80 rows) and the pinned list both need to check membership in `userWatchlist`, compute `const watchlistSet = useMemo(() => new Set(userWatchlist), [userWatchlist])` once per render, not inside `.map()`. This keeps the pinned ☆/★ toggle O(1) per row.
+**Tag:** #watchlist #performance #phase7b
+
+### L082 — New Persistent Preference Goes Into the Existing KV Bundle
+**Rule:** Any new user preference that needs to survive refresh (e.g. `userWatchlist`) must be added to the `settings:strategyBundle` JSON blob, not a new KV key. Add it to both the save object and the `useEffect` dependency array. Restore it from the load block inside the `if (savedBundle)` branch.
+**Tag:** #kv #persistence #phase7b
+
+### L083 — Collapsible Side Panels Should Default to Collapsed
+**Rule:** Side panels containing search or browse UIs (`watchlistCollapsed`) should initialize to `true` so the main content area is maximised on first load. The toggle arrow is always visible even when collapsed.
+**Tag:** #ux #layout #phase7b
+
+---
+
 ## KNOWN ISSUES LOG
 
 | ID | Issue | Status | Phase Found |
@@ -315,7 +342,7 @@ Prompt says "plain text NO JSON, 3 sentences only". Parser extracts `reasoning` 
 | KI009 | Portfolio Battlefield tab | ✅ Fixed Phase 6 — Gantt lanes, milestone nodes, AI advisor | Phase 6 |
 | KI010 | dashboard.css has dead CSS rules | Deferred — safe to ignore | Phase 6 |
 | KI011 | SET AI locks all symbols when one has workflow | ✅ Fixed Phase 6b/6c — per-symbol dict | Phase 6b |
-| KI012 | Portfolio tab black screen after Phase 6d manual patch | 🔴 Active — CC Phase 6d fix | Phase 6d |
+| KI012 | Portfolio tab black screen after Phase 6d manual patch | ✅ Fixed Phase 7b — full rewrite of portfolio-injector.js + Portfolio.jsx | Phase 6d |
 
 ---
 
