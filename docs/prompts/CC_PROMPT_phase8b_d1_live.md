@@ -1,3 +1,11 @@
+> **STATUS: ✅ COMPLETE — Phase 8b executed 2026-05-23**
+> D1 tab upgraded to live results. 8 READ queries fetch real data from Worker. "Under the hood" panel shows API URL + SQL.
+> New Worker routes: /api/trades/summary, /api/trades/count, /api/logs (GET+POST).
+> Committed: `feat: D1 tab live results — real data from Worker, SQL generator for destructive ops (Phase 8b)`
+> **Worker note:** Must manually paste index.js into Cloudflare Worker editor → Save & Deploy (L010).
+
+---
+
 # CC PROMPT — Phase 8b: D1 Tab Live Results
 # Upgrade D1 tab to show real data directly + SQL generator only for destructive ops
 # Paste this entire block into Claude Code

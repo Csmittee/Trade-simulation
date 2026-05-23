@@ -1,3 +1,9 @@
+> **STATUS: ✅ COMPLETE — Phase 8 executed 2026-05-23**
+> D1 query builder tab (SQL generator only) added as 4th tab in Dashboard.
+> Committed: `feat: D1 query builder tab — click-to-generate SQL (Phase 8)`
+
+---
+
 # CC PROMPT — Phase 8: D1 Query Tab
 # New 4th tab — click-based SQL generator, no direct execution
 # Paste this entire block into Claude Code

@@ -1,3 +1,9 @@
+> **STATUS: ✅ COMPLETE — Phase 7a executed 2026-05-23**
+> Grouped positions table with expand/collapse and click-to-switch symbol live in SET tab.
+> Committed: `feat: grouped positions table with expand/collapse and click-to-switch (Phase 7a)`
+
+---
+
 # CC PROMPT — Phase 7a: Grouped Positions Table (SET tab)
 # Single file change — low risk, high value
 # Paste this entire block into Claude Code

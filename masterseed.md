@@ -115,6 +115,15 @@
 
 ## CURRENT FILE INVENTORY
 
+### CC Prompts (history of executed phase prompts)
+```
+docs/prompts/
+├── CC_PROMPT_phase7a_grouped_positions.md   ✅ COMPLETE
+├── CC_PROMPT_phase8_d1tab.md                ✅ COMPLETE
+└── CC_PROMPT_phase8b_d1_live.md             ✅ COMPLETE
+```
+New prompt files go to `docs/prompts/` before execution, then stamped COMPLETE after.
+
 ### Worker (paste manually in Cloudflare editor — never connect GitHub)
 ```
 index.js    routes: /api/gold, /api/history, /api/set,
