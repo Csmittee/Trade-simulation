@@ -119,6 +119,7 @@
 ```
 docs/prompts/
 ├── CC_PROMPT_phase7a_grouped_positions.md   ✅ COMPLETE
+├── CC_PROMPT_phase7b_watchlist_ownscale.md  ✅ COMPLETE
 ├── CC_PROMPT_phase8_d1tab.md                ✅ COMPLETE
 └── CC_PROMPT_phase8b_d1_live.md             ✅ COMPLETE
 ```

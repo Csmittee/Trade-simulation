@@ -1,3 +1,9 @@
+> **STATUS: ✅ COMPLETE — Phase 7b executed 2026-05-23**
+> Per-lane own scale in Portfolio Battlefield + curated "My Watchlist" pinned section in SET tab (KV-persisted, starts collapsed).
+> Committed: `feat: per-lane own scale ruler + curated KV watchlist (Phase 7b)`
+
+---
+
 # CC PROMPT — Phase 7b: Per-Lane Own Scale + Curated Watchlist
 # Run AFTER Phase 7a is confirmed working
 # Paste this entire block into Claude Code
