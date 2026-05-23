@@ -238,10 +238,19 @@ export function computeUniqueLanes(
     // Own scale
     const openMs = lane.oldestOpenedAt ? new Date(lane.oldestOpenedAt).getTime() : now;
     lane.ownScaleOpenMs = openMs;
+    // ── Per-symbol duration for own scale and expiry (must be computed before ownScaleEndMs)
+    const symStrat2     = lane.market === "gold"
+      ? { strategyDuration }
+      : (setStrategySettings?.[lane.symbol] || {});
+    const symDurMs2     = parseDurationMs(symStrat2.strategyDuration);
+    const strategyExpired = !wfActive && symDurMs2 ? (now - openMs) > symDurMs2 : false;
+    lane.strategyExpired = strategyExpired;
+
+    // Own scale end
     if (wfActive) {
       const endDate = getWorkflowEndDate(wf);
       lane.ownScaleEndMs = endDate ? endDate.getTime() : openMs + (4 * 3600 * 1000);
-   } else if (symDurMs2) {
+    } else if (symDurMs2) {
       lane.ownScaleEndMs = openMs + symDurMs2;
     } else {
       lane.ownScaleEndMs = getSessionWindow(lane.market).end;
@@ -266,14 +275,6 @@ export function computeUniqueLanes(
     } else {
       lane.stageNodes = [];
     }
-
-    // Strategy expired
-    const symStrat2     = lane.market === "gold"
-      ? { strategyDuration }
-      : (setStrategySettings?.[lane.symbol] || {});
-    const symDurMs2     = parseDurationMs(symStrat2.strategyDuration);
-    const strategyExpired = !wfActive && symDurMs2 ? (now - openMs) > symDurMs2 : false;
-    lane.strategyExpired = strategyExpired;
 
     // Plan status
     if (wfActive) {
