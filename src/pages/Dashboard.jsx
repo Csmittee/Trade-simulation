@@ -17,6 +17,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import GoldMarket from "./GoldMarket.jsx";
 import SetMarket   from "./SetMarket.jsx";
 import Portfolio   from "./Portfolio.jsx";
+import D1Tab       from "./D1Tab.jsx";
 
 import Tooltip, { TooltipIcon } from "../components/Tooltip.jsx";
 import { createPortfolio, resetPortfolio, calcPortfolioSummary, isMarketOpen } from "../core/portfolio-engine.js";
@@ -181,6 +182,7 @@ const TABS = [
   { key: "gold",      label: "Gold",      icon: "🥇" },
   { key: "set",       label: "SET/MAI",   icon: "📈" },
   { key: "portfolio", label: "Portfolio", icon: "💼" },
+  { key: "d1",        label: "D1",        icon: "🗄" },
 ];
 
 // A blank workflow slice for one symbol
@@ -701,6 +703,7 @@ const goldMarketProps = {
             onTabSwitch={setActiveTab}
           />
         )}
+        {activeTab === "d1" && <D1Tab />}
       </main>
 
       {/* ── Reset Dialog ── */}
