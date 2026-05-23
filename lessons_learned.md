@@ -356,6 +356,37 @@ const daysAgo = n  => new Date(Date.now() - n * 86400000).toISOString().slice(0,
 ```
 **Tag:** #d1 #dates #phase8
 
+### L087 — Worker: /api/logs Was Missing — Silent Fail in Dashboard Activity Log Writes
+**Problem:** Dashboard.jsx called `POST /api/logs` after every trade, but the Worker had no `/api/logs` route. The call failed silently because Dashboard catches all fetch errors.
+**Solution:** Always check that every route called by the frontend is implemented in `index.js`. Use `grep` on the Worker to audit. Add `handleLogs` for both GET and POST.
+**Rule:** Any time a new dashboard feature calls a Worker route, verify the route exists before assuming it works.
+**Tag:** #worker #d1 #logs #phase8b
+
+### L088 — /api/trades GET: side and hours Params Were Ignored
+**Problem:** Dashboard.jsx called `/api/trades?market=set&side=sell&hours=12&limit=100` but the Worker only read `market`, `symbol`, and `limit`. The `side` and `hours` filters were silently ignored — all trade records were returned unfiltered.
+**Solution:** Audit every `url.searchParams.get()` in the Worker. Add handling for all params the frontend actually sends.
+**Tag:** #worker #d1 #trades #phase8b
+
+### L089 — D1 activity_log: INTEGER AUTOINCREMENT id — Never Insert It
+**Problem:** Dashboard.jsx sends a UUID string `id` in the POST body. D1's `activity_log` table uses `INTEGER PRIMARY KEY AUTOINCREMENT`. Inserting the string `id` causes a type error.
+**Solution:** The INSERT must omit `id` entirely: `INSERT INTO activity_log (type, market, message, detail, created_at) VALUES (?, ?, ?, ?, ?)`. D1 auto-assigns the integer id.
+**Tag:** #d1 #schema #phase8b
+
+### L090 — D1 GET: Alias Column Names to Match Frontend Expectations
+**Problem:** `activity_log` stores `created_at` but Dashboard.jsx reads `r.logged_at`. The field names didn't match, so the log appeared empty even with records in the table.
+**Solution:** Use SQL alias: `SELECT ..., created_at as logged_at FROM activity_log`. Check what field names the frontend reads before writing the SELECT.
+**Tag:** #d1 #schema #sql #phase8b
+
+### L091 — from vs hours in Worker GET: from Takes Priority
+**Problem:** Two different callers use the same `/api/trades` endpoint: Dashboard.jsx sends `?hours=12` (rolling window), D1Tab sends `?from=YYYY-MM-DD` (calendar date). Both params must work without conflict.
+**Solution:** Check `from` first. If present, add `AND opened_at >= ?` and skip `hours`. This lets both callers share the same route cleanly.
+**Tag:** #worker #d1 #phase8b
+
+### L092 — "Under the Hood" Panel: Show URL + SQL After Every Live Fetch
+**Problem:** User wanted to understand what the app was doing and be able to reproduce queries manually in Cloudflare D1 console.
+**Solution:** After every READ fetch, display: (1) the full Worker API URL that was called, with a copy button, and (2) the equivalent D1 SQL that the Worker runs, also with a copy button. This serves both learning and manual action. Never auto-execute destructive SQL — SQL-only mode for DELETE/reset.
+**Tag:** #d1 #ux #learning #phase8b
+
 ---
 
 ## KNOWN ISSUES LOG
