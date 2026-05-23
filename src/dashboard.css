@@ -2121,3 +2121,54 @@ a { color: var(--gold); }
 .set-market .market-body:has(.panel-watchlist--collapsed) {
   grid-template-columns: 28px 1fr var(--right-panel-w);
 }
+
+/* ── Phase 7a — Grouped position rows ─────────────────────────────────────── */
+.positions-table--grouped {
+  display: flex; flex-direction: column; width: 100%;
+}
+.pos-group {
+  border-bottom: 1px solid var(--border);
+}
+.pos-group-header {
+  display: grid;
+  grid-template-columns: 100px 110px 110px 90px 110px 80px 28px;
+  align-items: center; padding: 8px 10px;
+  cursor: pointer; transition: background 0.15s;
+  border-left: 2px solid transparent;
+}
+.pos-group-header:hover { background: var(--bg-hover); }
+.pos-group-header--active {
+  border-left: 2px solid var(--gold, #f59e0b);
+  background: rgba(245,158,11,0.05);
+}
+.pos-group-sym {
+  font-size: 13px; font-weight: 700; color: var(--text-primary);
+  display: flex; align-items: center; gap: 6px;
+}
+.pos-group-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent, #3b82f6); color: #fff;
+  border-radius: 10px; font-size: 9px; font-weight: 700;
+  padding: 1px 6px; min-width: 18px;
+}
+.pos-group-qty   { font-size: 11px; color: var(--text-muted); }
+.pos-group-entry { font-size: 11px; color: var(--text-muted); }
+.pos-group-price { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.pos-group-pnl   { font-size: 12px; font-weight: 700; }
+.pos-group-pct   { font-size: 11px; font-weight: 600; }
+.pos-group-expand {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 9px; padding: 4px;
+  justify-self: center;
+}
+.pos-group-expand:hover { color: var(--text-primary); }
+
+.pos-child-row {
+  display: grid;
+  grid-template-columns: 50px 70px 90px 90px 100px 75px 75px 75px 1fr;
+  align-items: center; padding: 5px 10px 5px 24px;
+  font-size: 10px; color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.04));
+  background: rgba(0,0,0,0.15);
+}
+.pos-child-qty { font-weight: 600; color: var(--text-primary); }

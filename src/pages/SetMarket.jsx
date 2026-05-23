@@ -4,6 +4,7 @@
  * Phase 6 bottom panel redesign
  * KI011 — Per-symbol workflow independence
  * Phase 6d — Per-symbol preset strategy settings (activeStrategy, autoExecute, strategyDuration)
+ * Phase 7a — Grouped positions table (Active view) with expand/collapse + click-to-switch
  */
 
 import { useState, useCallback, useMemo } from "react";
@@ -276,6 +277,8 @@ export default function SetMarket({
   const [posView,            setPosView]            = useState("active");
   const [sellDeskOpen,       setSellDeskOpen]       = useState(false);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
+  // Phase 7a: track which symbol groups are expanded in the Active view
+  const [expandedGroups,     setExpandedGroups]     = useState({});
 
   const {
     watchlistData, activeQuote, priceHistory, historyLoading,
@@ -336,6 +339,23 @@ export default function SetMarket({
   const handleSymStrategyChange  = useCallback(v => onSetStrategyChange(activeSymbol, { activeStrategy:   v }), [activeSymbol, onSetStrategyChange]);
   const handleSymAutoExecChange  = useCallback(v => onSetStrategyChange(activeSymbol, { autoExecute:      v }), [activeSymbol, onSetStrategyChange]);
   const handleSymDurationChange  = useCallback(v => onSetStrategyChange(activeSymbol, { strategyDuration: v }), [activeSymbol, onSetStrategyChange]);
+
+  // ── Phase 7a: grouped positions for Active view ───────────────────────────
+  const toggleGroup = useCallback((sym, e) => {
+    e.stopPropagation();
+    setExpandedGroups(prev => ({ ...prev, [sym]: !prev[sym] }));
+  }, []);
+
+  const positionGroups = useMemo(() => {
+    const groups = {};
+    setPositions.forEach(pos => {
+      if (!groups[pos.symbol]) groups[pos.symbol] = [];
+      groups[pos.symbol].push(pos);
+    });
+    return groups;
+  }, [setPositions]);
+
+  const groupedSymbols = useMemo(() => Object.keys(positionGroups), [positionGroups]);
 
   // ── Symbol change: notify Dashboard, reset timeframe ─────────────────────
   const handleSymbolChange = (sym) => {
@@ -540,67 +560,145 @@ export default function SetMarket({
                 {/* Scrollable positions zone */}
                 <div className="panel-bottom-zone positions-zone pz-unified">
                   {(() => {
-                    const openRows   = setPositions.map(pos => ({ ...pos, _rowType: "open" }));
-                    const closedRows = posView === "all" ? sessionClosed.map(t => ({ ...t, _rowType: "closed" })) : [];
-                    const allRows    = [...openRows, ...closedRows];
-
-                    if (posView === "all" && sessionLoading) {
-                      return <div className="empty-state">⏳ Loading last 12 hours...</div>;
-                    }
-                    if (allRows.length === 0) {
+                    // ── All Session view — flat closed rows (unchanged) ──────────────────
+                    if (posView === "all") {
+                      if (sessionLoading) {
+                        return <div className="empty-state">⏳ Loading last 12 hours...</div>;
+                      }
+                      const openRows   = setPositions.map(pos => ({ ...pos, _rowType: "open" }));
+                      const closedRows = sessionClosed.map(t => ({ ...t, _rowType: "closed" }));
+                      const allRows    = [...openRows, ...closedRows];
+                      if (allRows.length === 0) {
+                        return <div className="empty-state">No trades in the last 12 hours.</div>;
+                      }
                       return (
-                        <div className="empty-state">
-                          {posView === "active" ? "No open positions. Select a stock and place a buy order." : "No trades in the last 12 hours."}
+                        <div className="positions-table positions-table--12col">
+                          <div className="pos-row pos-row--12col header">
+                            <span>Time</span><span>Side</span><span>Symbol</span><span>Qty</span>
+                            <span>Entry</span><span>Price</span><span>P&L</span><span>P&L%</span>
+                            <span>Stop</span><span>Target</span><span>Strategy</span><span>Status</span>
+                          </div>
+                          {allRows.map((row, i) => {
+                            if (row._rowType === "open") {
+                              const pnlUp = row.unrealisedPnL >= 0;
+                              const openTime = row.openedAt ? new Date(row.openedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+                              return (
+                                <div key={row.id || i} className="pos-row pos-row--12col">
+                                  <span className="pos-time">{openTime}</span>
+                                  <span className="pos-side pos-side--buy">▲ BUY</span>
+                                  <span className="pos-symbol">{row.symbol?.replace(".BK","")}</span>
+                                  <span>{row.qty?.toLocaleString()}</span>
+                                  <span>฿{row.entryPrice?.toFixed(2)}</span>
+                                  <span>฿{row.currentPrice?.toFixed(2)}</span>
+                                  <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}฿{row.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}</span>
+                                  <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}{row.unrealisedPnLPct?.toFixed(2)}%</span>
+                                  <span className="pos-stop">{row.stopLoss   ? `฿${row.stopLoss}`   : "—"}</span>
+                                  <span className="pos-tp">  {row.takeProfit ? `฿${row.takeProfit}` : "—"}</span>
+                                  <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
+                                  <span className="pos-status pos-status--active">ACTIVE</span>
+                                </div>
+                              );
+                            } else {
+                              const pnlUp = (row.pnl ?? 0) >= 0;
+                              const closeTime = row.closed_at ? new Date(row.closed_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+                              return (
+                                <div key={row.id || i} className="pos-row pos-row--12col pos-row--closed">
+                                  <span className="pos-time">{closeTime}</span>
+                                  <span className="pos-side pos-side--sell">▼ SELL</span>
+                                  <span className="pos-symbol">{row.symbol?.replace(".BK","")}</span>
+                                  <span>{row.qty?.toLocaleString()}</span>
+                                  <span>฿{parseFloat(row.entry_price)?.toFixed(2)}</span>
+                                  <span>{row.exit_price ? `฿${parseFloat(row.exit_price)?.toFixed(2)}` : "—"}</span>
+                                  <span className={pnlUp?"pnl-up":"pnl-down"}>
+                                    {row.pnl != null ? `${pnlUp?"+":""}฿${Math.round(row.pnl)?.toLocaleString()}` : "—"}
+                                  </span>
+                                  <span>—</span><span>—</span><span>—</span>
+                                  <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
+                                  <span className="pos-status pos-status--closed">CLOSED</span>
+                                </div>
+                              );
+                            }
+                          })}
                         </div>
                       );
                     }
+
+                    // ── Active view — grouped by symbol (Phase 7a) ──────────────────────
+                    if (groupedSymbols.length === 0) {
+                      return <div className="empty-state">No open positions. Select a stock and place a buy order.</div>;
+                    }
                     return (
-                      <div className="positions-table positions-table--12col">
-                        <div className="pos-row pos-row--12col header">
-                          <span>Time</span><span>Side</span><span>Symbol</span><span>Qty</span>
-                          <span>Entry</span><span>Price</span><span>P&L</span><span>P&L%</span>
-                          <span>Stop</span><span>Target</span><span>Strategy</span><span>Status</span>
-                        </div>
-                        {allRows.map((row, i) => {
-                          if (row._rowType === "open") {
-                            const pnlUp = row.unrealisedPnL >= 0;
-                            const openTime = row.openedAt ? new Date(row.openedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
-                            return (
-                              <div key={row.id || i} className="pos-row pos-row--12col">
-                                <span className="pos-time">{openTime}</span>
-                                <span className="pos-side pos-side--buy">▲ BUY</span>
-                                <span className="pos-symbol">{row.symbol?.replace(".BK","")}</span>
-                                <span>{row.qty?.toLocaleString()}</span>
-                                <span>฿{row.entryPrice?.toFixed(2)}</span>
-                                <span>฿{row.currentPrice?.toFixed(2)}</span>
-                                <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}฿{row.unrealisedPnL?.toLocaleString("en-US",{minimumFractionDigits:0})}</span>
-                                <span className={pnlUp?"pnl-up":"pnl-down"}>{pnlUp?"+":""}{row.unrealisedPnLPct?.toFixed(2)}%</span>
-                                <span className="pos-stop">{row.stopLoss   ? `฿${row.stopLoss}`   : "—"}</span>
-                                <span className="pos-tp">  {row.takeProfit ? `฿${row.takeProfit}` : "—"}</span>
-                                <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
-                                <span className="pos-status pos-status--active">ACTIVE</span>
-                              </div>
-                            );
-                          } else {
-                            const pnlUp = (row.pnl ?? 0) >= 0;
-                            const closeTime = row.closed_at ? new Date(row.closed_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
-                            return (
-                              <div key={row.id || i} className="pos-row pos-row--12col pos-row--closed">
-                                <span className="pos-time">{closeTime}</span>
-                                <span className="pos-side pos-side--sell">▼ SELL</span>
-                                <span className="pos-symbol">{row.symbol?.replace(".BK","")}</span>
-                                <span>{row.qty?.toLocaleString()}</span>
-                                <span>฿{parseFloat(row.entry_price)?.toFixed(2)}</span>
-                                <span>{row.exit_price ? `฿${parseFloat(row.exit_price)?.toFixed(2)}` : "—"}</span>
-                                <span className={pnlUp?"pnl-up":"pnl-down"}>
-                                  {row.pnl != null ? `${pnlUp?"+":""}฿${Math.round(row.pnl)?.toLocaleString()}` : "—"}
+                      <div className="positions-table positions-table--grouped">
+                        {groupedSymbols.map(sym => {
+                          const rows      = positionGroups[sym];
+                          const totalQty  = rows.reduce((s, p) => s + (p.qty || 0), 0);
+                          const totalCost = rows.reduce((s, p) => s + (p.totalCost || 0), 0);
+                          const totalPnl  = rows.reduce((s, p) => s + (p.unrealisedPnL || 0), 0);
+                          const avgEntry  = totalQty > 0 ? totalCost / totalQty : 0;
+                          const curPrice  = rows[0]?.currentPrice || 0;
+                          const pnlPct    = avgEntry > 0 ? ((curPrice - avgEntry) / avgEntry) * 100 : 0;
+                          const pnlUp     = totalPnl >= 0;
+                          const isActive  = sym === activeSymbol;
+                          const isExpanded = !!expandedGroups[sym];
+                          const count     = rows.length;
+
+                          return (
+                            <div key={sym} className="pos-group">
+                              {/* Summary row — click to switch symbol */}
+                              <div
+                                className={`pos-group-header ${isActive ? 'pos-group-header--active' : ''}`}
+                                onClick={() => setActiveSymbol(sym)}
+                              >
+                                <span className="pos-group-sym">
+                                  {sym.replace('.BK', '')}
+                                  <span className="pos-group-count">{count}</span>
                                 </span>
-                                <span>—</span><span>—</span><span>—</span>
-                                <span className="pos-strategy">{row.strategy !== "manual" ? `🤖 ${row.strategy}` : "—"}</span>
-                                <span className="pos-status pos-status--closed">CLOSED</span>
+                                <span className="pos-group-qty">{totalQty.toLocaleString()} shares</span>
+                                <span className="pos-group-entry">avg ฿{avgEntry.toFixed(2)}</span>
+                                <span className="pos-group-price">฿{curPrice.toFixed(2)}</span>
+                                <span className={`pos-group-pnl ${pnlUp ? 'pnl-up' : 'pnl-down'}`}>
+                                  {pnlUp ? '+' : ''}฿{Math.round(totalPnl).toLocaleString()}
+                                </span>
+                                <span className={`pos-group-pct ${pnlUp ? 'pnl-up' : 'pnl-down'}`}>
+                                  {pnlUp ? '+' : ''}{pnlPct.toFixed(2)}%
+                                </span>
+                                <button
+                                  className="pos-group-expand"
+                                  onClick={(e) => toggleGroup(sym, e)}
+                                  title={isExpanded ? 'Collapse' : 'Expand buys'}
+                                >
+                                  {isExpanded ? '▼' : '▶'}
+                                </button>
                               </div>
-                            );
-                          }
+
+                              {/* Child rows — individual buys */}
+                              {isExpanded && rows.map((pos, i) => {
+                                const childPnlUp  = (pos.unrealisedPnL || 0) >= 0;
+                                const openTime    = pos.openedAt
+                                  ? new Date(pos.openedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+                                  : '—';
+                                return (
+                                  <div key={pos.id || i} className="pos-child-row">
+                                    <span className="pos-time">{openTime}</span>
+                                    <span className="pos-child-qty">{(pos.qty || 0).toLocaleString()}</span>
+                                    <span>฿{pos.entryPrice?.toFixed(2)}</span>
+                                    <span>฿{pos.currentPrice?.toFixed(2)}</span>
+                                    <span className={childPnlUp ? 'pnl-up' : 'pnl-down'}>
+                                      {childPnlUp ? '+' : ''}฿{Math.round(pos.unrealisedPnL || 0).toLocaleString()}
+                                    </span>
+                                    <span className={childPnlUp ? 'pnl-up' : 'pnl-down'}>
+                                      {childPnlUp ? '+' : ''}{(pos.unrealisedPnLPct || 0).toFixed(2)}%
+                                    </span>
+                                    <span className="pos-stop">{pos.stopLoss ? `฿${pos.stopLoss}` : '—'}</span>
+                                    <span className="pos-tp">{pos.takeProfit ? `฿${pos.takeProfit}` : '—'}</span>
+                                    <span className="pos-strategy">
+                                      {pos.strategy && pos.strategy !== 'manual' ? `🤖 ${pos.strategy}` : '—'}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
                         })}
                       </div>
                     );
