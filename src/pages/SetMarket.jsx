@@ -148,15 +148,17 @@ const SET_UNIVERSE = [
 // ── Watchlist search + tier filter component ──────────────────────────────────
 const TIER_LABELS = { all: "All SET/MAI", "1": "Top 50", "2": "Top 100" };
 
-function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
+function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange, userWatchlist, onAddToWatchlist, onRemoveFromWatchlist }) {
   const [query, setQuery] = useState("");
   const [tier,  setTier]  = useState("1");
+
+  const watchlistSet = useMemo(() => new Set(userWatchlist || []), [userWatchlist]);
 
   const filtered = useMemo(() => {
     const tierNum = tier === "all" ? null : parseInt(tier);
     const seen = new Set();
     return SET_UNIVERSE.filter(s => {
-      if (seen.has(s.t)) return false; // deduplicate
+      if (seen.has(s.t)) return false;
       seen.add(s.t);
       if (tierNum && s.tier > tierNum) return false;
       if (!query.trim()) return true;
@@ -167,10 +169,46 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
 
   return (
     <div className="watchlist-panel">
-      <div className="section-title">
-        SET / MAI
-        <TooltipIcon content="Search any SET or MAI listed stock by ticker or name. Filter by market cap tier." />
-      </div>
+
+      {/* ── Pinned watchlist section ── */}
+      {(userWatchlist?.length > 0) && (
+        <>
+          <div className="wl-section-label">★ My Watchlist</div>
+          {userWatchlist.map(ticker => {
+            const entry    = SET_UNIVERSE.find(s => s.t === ticker);
+            const quote    = watchlistData[ticker];
+            const changeUp = (quote?.changePct || 0) >= 0;
+            return (
+              <div key={ticker} className="wl-pinned-row">
+                <button
+                  className={`wl-pinned-main watchlist-row ${ticker === activeSymbol ? "active" : ""}`}
+                  onClick={() => onSymbolChange(ticker)}
+                >
+                  <div className="wl-left">
+                    <span className="wl-symbol">{ticker.replace(".BK", "")}</span>
+                    <span className="wl-name">{entry?.n || ""}</span>
+                  </div>
+                  <div className="wl-right">
+                    {!quote ? <span className="wl-loading">—</span> : (
+                      <>
+                        <span className="wl-price">฿{quote.price?.toFixed(2)}</span>
+                        <span className={`wl-change ${changeUp ? "up" : "down"}`}>
+                          {changeUp ? "▲" : "▼"} {Math.abs(quote.changePct || 0).toFixed(2)}%
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </button>
+                <button className="wl-remove-btn" onClick={() => onRemoveFromWatchlist(ticker)} title="Remove from watchlist">✕</button>
+              </div>
+            );
+          })}
+          <div className="wl-section-divider" />
+        </>
+      )}
+
+      {/* ── Browse section ── */}
+      <div className="wl-section-label">Browse SET/MAI</div>
 
       <div className="wl-tier-row">
         {Object.entries(TIER_LABELS).map(([key, label]) => (
@@ -196,25 +234,38 @@ function WatchlistPanel({ activeSymbol, watchlistData, onSymbolChange }) {
           <div className="wl-empty">No results for "{query}"</div>
         ) : (
           filtered.map(s => {
-            const quote   = watchlistData[s.t];
+            const quote    = watchlistData[s.t];
             const changeUp = (quote?.changePct || 0) >= 0;
+            const isPinned = watchlistSet.has(s.t);
             return (
-              <button key={s.t} className={`watchlist-row ${s.t === activeSymbol ? "active" : ""}`} onClick={() => onSymbolChange(s.t)}>
-                <div className="wl-left">
-                  <span className="wl-symbol">{s.t.replace(".BK", "")}</span>
-                  <span className="wl-name">{s.n}</span>
-                </div>
-                <div className="wl-right">
-                  {!quote ? <span className="wl-loading">—</span> : (
-                    <>
-                      <span className="wl-price">฿{quote.price?.toFixed(2)}</span>
-                      <span className={`wl-change ${changeUp ? "up" : "down"}`}>
-                        {changeUp ? "▲" : "▼"} {Math.abs(quote.changePct || 0).toFixed(2)}%
-                      </span>
-                    </>
-                  )}
-                </div>
-              </button>
+              <div key={s.t} className="wl-browse-row">
+                <button
+                  className={`wl-browse-main watchlist-row ${s.t === activeSymbol ? "active" : ""}`}
+                  onClick={() => onSymbolChange(s.t)}
+                >
+                  <div className="wl-left">
+                    <span className="wl-symbol">{s.t.replace(".BK", "")}</span>
+                    <span className="wl-name">{s.n}</span>
+                  </div>
+                  <div className="wl-right">
+                    {!quote ? <span className="wl-loading">—</span> : (
+                      <>
+                        <span className="wl-price">฿{quote.price?.toFixed(2)}</span>
+                        <span className={`wl-change ${changeUp ? "up" : "down"}`}>
+                          {changeUp ? "▲" : "▼"} {Math.abs(quote.changePct || 0).toFixed(2)}%
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </button>
+                <button
+                  className="wl-add-btn"
+                  onClick={() => isPinned ? onRemoveFromWatchlist(s.t) : onAddToWatchlist(s.t)}
+                  title={isPinned ? "Remove from My Watchlist" : "Add to My Watchlist"}
+                >
+                  {isPinned ? "★" : "☆"}
+                </button>
+              </div>
             );
           })
         )}
@@ -269,6 +320,9 @@ export default function SetMarket({
   setStrategySettings,
   onSetStrategyChange,
   onActiveSetSymbolChange,
+  userWatchlist,
+  onAddToWatchlist,
+  onRemoveFromWatchlist,
 }) {
   const [activeSymbol,       setActiveSymbol]       = useState(SET_UNIVERSE[0].t);
   const [timeframe,          setTimeframe]          = useState("1D");
@@ -276,7 +330,7 @@ export default function SetMarket({
   const [sellQty,            setSellQty]            = useState("");
   const [posView,            setPosView]            = useState("active");
   const [sellDeskOpen,       setSellDeskOpen]       = useState(false);
-  const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
+  const [watchlistCollapsed, setWatchlistCollapsed] = useState(true);
   // Phase 7a: track which symbol groups are expanded in the Active view
   const [expandedGroups,     setExpandedGroups]     = useState({});
 
@@ -485,6 +539,9 @@ export default function SetMarket({
               activeSymbol={activeSymbol}
               watchlistData={watchlistData}
               onSymbolChange={handleSymbolChange}
+              userWatchlist={userWatchlist}
+              onAddToWatchlist={onAddToWatchlist}
+              onRemoveFromWatchlist={onRemoveFromWatchlist}
             />
           )}
         </div>

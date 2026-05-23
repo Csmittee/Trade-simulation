@@ -248,6 +248,7 @@ export default function Dashboard() {
   const [setStrategySettings, setSetStrategySettings] = useState({});
   // Track which symbol SetMarket currently has selected (so we can derive props)
   const [activeSetSymbol, setActiveSetSymbol] = useState("PTT.BK");
+  const [userWatchlist,   setUserWatchlist]   = useState(config.data.set.watchlistDefault);
 
   // Derived: active symbol's workflow bundle
   const activeSetBundle   = getSetBundle(setWorkflows, activeSetSymbol);
@@ -316,6 +317,9 @@ export default function Dashboard() {
             if (b.setStrategySettings && typeof b.setStrategySettings === "object") {
             setSetStrategySettings(b.setStrategySettings);
           }
+          if (Array.isArray(b.userWatchlist)) {
+            setUserWatchlist(b.userWatchlist);
+          }
         } catch { /* malformed JSON — start fresh */ }
       }
 
@@ -379,12 +383,13 @@ export default function Dashboard() {
       setWorkflows,
       setOrderModes,
       setStrategySettings,
+      userWatchlist,
     }));
   }, [
     activeStrategy, autoExecute, strategyDuration, goldOrderMode,
     goldWorkflow, goldStageStatuses, goldActiveStageIdx, goldConsecutiveRed,
     goldWorkflowDone, goldFallbackTriggered, goldStagePnl,
-    setWorkflows, setOrderModes,setStrategySettings,
+    setWorkflows, setOrderModes, setStrategySettings, userWatchlist,
   ]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -412,6 +417,7 @@ export default function Dashboard() {
     setSetWorkflows({});
     setSetOrderModes({});
     setSetStrategySettings({});
+    setUserWatchlist(config.data.set.watchlistDefault);
     setActivityEvents([]);
     await kvSetSetting(BUNDLE_KEY, JSON.stringify(EMPTY_BUNDLE));
   }, []);
@@ -493,6 +499,14 @@ export default function Dashboard() {
   const handleSetStrategyChange = useCallback((sym, patch) => {
     setSetStrategySettings(prev => ({ ...prev, [sym]: { ...(prev[sym] || {}), ...patch } }));
   }, []);
+
+  const handleAddToWatchlist = useCallback((ticker) => {
+    setUserWatchlist(prev => prev.includes(ticker) ? prev : [...prev, ticker]);
+  }, []);
+
+  const handleRemoveFromWatchlist = useCallback((ticker) => {
+    setUserWatchlist(prev => prev.filter(t => t !== ticker));
+  }, []);
   
   // ── Loading / first-run states ────────────────────────────────────────────
   if (!bootstrapped) {
@@ -558,8 +572,11 @@ const goldMarketProps = {
     setOrderModes,
     onSetOrderModeChange:    handleSetOrderModeChange,
     setStrategySettings,
-    onSetStrategyChange:     handleSetStrategyChange,
-    onActiveSetSymbolChange: setActiveSetSymbol,
+    onSetStrategyChange:      handleSetStrategyChange,
+    onActiveSetSymbolChange:  setActiveSetSymbol,
+    userWatchlist,
+    onAddToWatchlist:         handleAddToWatchlist,
+    onRemoveFromWatchlist:    handleRemoveFromWatchlist,
   };
 
   return (

@@ -1,6 +1,7 @@
  /**
  * Portfolio.jsx — The Battlefield v8
  * Phase 6
+ * Phase 7b — Per-lane independent own scale (computePerLaneScale)
  *
  * KI011 change:
  * - setBundle prop replaced with setWorkflows dict
@@ -16,6 +17,7 @@ import {
   fetchTradeHistory,
   fetchBattlefieldAdvisor,
   computeSharedOwnRuler,
+  computePerLaneScale,
   DAILY_GOAL,
 } from "../injectors/portfolio-injector.js";
 import { calcPortfolioSummary } from "../core/portfolio-engine.js";
@@ -259,15 +261,17 @@ export default function Portfolio({
 
   const handlePromptSend = () => { if (!actPrompt.trim()) return; handleAiAdvisor(actPrompt); setActPrompt(""); };
 
-  // ── Ruler prep ────────────────────────────────────────────────────────────
+  // ── Ruler + lane prep ─────────────────────────────────────────────────────
   const visibleLanes = lanesCollapsed ? [] : lanes.slice(0, 5);
   const hasMore      = lanes.length > 5;
 
-  const ownRulerLabels = scaleMode === "own" ? computeSharedOwnRuler(visibleLanes) : null;
+  // Phase 7b: per-lane scale — each lane fills its own full bar width
+  const visibleLanesOwn = scaleMode === "own"
+    ? visibleLanes.map(lane => computePerLaneScale({ ...lane }))
+    : visibleLanes;
 
   const hasGold      = lanes.some(l => l.market === "gold");
   const sharedLabels = [hasGold?"09:00":"10:00","11:00","13:00","15:00","17:00"].map((label,i) => ({ pct: i*25, label }));
-  const rulerLabels  = scaleMode === "own" ? (ownRulerLabels || sharedLabels) : sharedLabels;
 
   const BAR_HEIGHT = 24;
 
@@ -303,7 +307,7 @@ export default function Portfolio({
           <span className="bf2-zone-icon">⟶</span>
           <span className="bf2-zone-label">Zone 1 — Plan</span>
           <span className="bf2-zone-sub">
-            {scaleMode === "shared" ? "Session clock · 17:00 ICT = right edge" : "Own scale · full plan span · dot = now · nodes = stages"}
+            {scaleMode === "shared" ? "Session clock · 17:00 ICT = right edge" : "Own scale · each lane fills its full span · dot = now · nodes = stages"}
           </span>
           <div className="bf2-lane-controls">
             <button className={`bf2-scale-btn ${scaleMode==="shared"?"active":""}`} onClick={() => setScaleMode("shared")}>shared clock</button>
@@ -314,62 +318,73 @@ export default function Portfolio({
 
         {!lanesCollapsed && (
           <>
-            <div className="bf2-timeline-ruler">
-              <div className="bf2-ruler-spacer" />
-              <div className="bf2-ruler-track">
-                {rulerLabels.map((item, i) => (
-                  <span key={i} className="bf2-ruler-tick" style={{ left: `${item.pct}%` }}>{item.label}</span>
-                ))}
+            {/* Shared ruler — only in shared clock mode */}
+            {scaleMode === "shared" && (
+              <div className="bf2-timeline-ruler">
+                <div className="bf2-ruler-spacer" />
+                <div className="bf2-ruler-track">
+                  {sharedLabels.map((item, i) => (
+                    <span key={i} className="bf2-ruler-tick" style={{ left: `${item.pct}%` }}>{item.label}</span>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {lanes.length === 0 ? (
               <div className="bf2-empty-lane">No open positions</div>
             ) : (
               <div className="bf2-lanes">
-                {visibleLanes.map(lane => {
+                {visibleLanesOwn.map(lane => {
                   const col = planColor(lane.planStatus);
                   const bg  = planBg(lane.planStatus);
                   const pnl = Math.round(lane.unrealisedPnL);
                   const nodes = lane.stageNodes || [];
 
                   if (scaleMode === "own") {
-                    const barStartPct = Math.round((lane.ownScaleBarStart ?? 0) * 100);
-                    const barEndPct   = Math.round((lane.ownScaleBarEnd   ?? 1) * 100);
-                    const barWidthPct = Math.max(2, barEndPct - barStartPct);
-                    const nowPct      = Math.round((lane.ownScaleNowPct   ?? 0) * 100);
-                    const nowInBar    = lane.ownScaleNowInSpan;
+                    // Phase 7b: bar always full width, now dot relative to lane's own span
+                    const nowPct   = Math.round((lane.perLaneNowPct ?? 0) * 100);
+                    const nowInBar = lane.perLaneNowInSpan;
 
                     return (
-                      <div key={lane.symbol} className="bf2-lane" style={{ marginBottom: 18 }}>
-                        <div className="bf2-lane-name">{lane.displayName}</div>
-                        <div className="bf2-lane-track" style={{ position: "relative", overflow: "visible" }}>
-                          <div style={{
-                            position: "absolute", left: `${barStartPct}%`, width: `${barWidthPct}%`,
-                            top: 0, bottom: 0, background: bg,
-                            borderLeft: `2px solid ${col}`, borderRight: `2px solid ${col}`,
-                            borderRadius: 3, display: "flex", alignItems: "center",
-                            paddingLeft: 6, overflow: "hidden",
-                          }}>
-                            <span className="bf2-lane-proto" style={{ whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontSize: 9 }}>
-                              {lane.protocol || "manual"}
-                              {lane.protocolDetail && ` · ${lane.protocolDetail}`}
-                              {lane.strategyExpired && " ⏱"}
-                            </span>
+                      <div key={lane.symbol} className="bf2-lane" style={{ marginBottom: 6, alignItems: "flex-start" }}>
+                        <div className="bf2-lane-name" style={{ marginTop: 4 }}>{lane.displayName}</div>
+                        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                          <div className="bf2-lane-track" style={{ position: "relative", overflow: "visible" }}>
+                            <div style={{
+                              position: "absolute", left: "0%", width: "100%",
+                              top: 0, bottom: 0, background: bg,
+                              borderLeft: `2px solid ${col}`, borderRight: `2px solid ${col}`,
+                              borderRadius: 3, display: "flex", alignItems: "center",
+                              paddingLeft: 6, overflow: "hidden",
+                            }}>
+                              <span className="bf2-lane-proto" style={{ whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontSize: 9 }}>
+                                {lane.protocol || "manual"}
+                                {lane.protocolDetail && ` · ${lane.protocolDetail}`}
+                                {lane.strategyExpired && " ⏱"}
+                              </span>
+                            </div>
+
+                            {nodes.map(node => (
+                              <StageNode key={node.id} node={node} barHeight={BAR_HEIGHT} />
+                            ))}
+
+                            <div className="bf2-lane-pulse" style={{
+                              position: "absolute", left: `${nowPct}%`,
+                              top: "50%", transform: "translateY(-50%) translateX(-50%)",
+                              background: nowInBar ? col : "rgba(255,255,255,0.25)", zIndex: 2,
+                            }} />
                           </div>
-
-                          {nodes.map(node => (
-                            <StageNode key={node.id} node={node} barHeight={BAR_HEIGHT} />
-                          ))}
-
-                          <div className="bf2-lane-pulse" style={{
-                            position: "absolute", left: `${nowPct}%`,
-                            top: "50%", transform: "translateY(-50%) translateX(-50%)",
-                            background: nowInBar ? col : "rgba(255,255,255,0.25)", zIndex: 2,
-                          }} />
+                          {/* Per-lane mini time ruler */}
+                          <div className="bf2-per-lane-ruler">
+                            {(lane.perLaneRuler || []).map((tick, i) => (
+                              <span key={i} className="bf2-per-lane-tick" style={{ left: `${tick.pct}%` }}>
+                                {tick.label}
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                        <span className="bf2-lane-badge" style={{ background: bg, color: col }}>{planLabel(lane.planStatus)}</span>
-                        <span className="bf2-lane-pnl" style={{ color: pnl>=0?"#22c55e":"#ef4444" }}>{fmtPnl(pnl)}</span>
+                        <span className="bf2-lane-badge" style={{ background: bg, color: col, marginTop: 2 }}>{planLabel(lane.planStatus)}</span>
+                        <span className="bf2-lane-pnl" style={{ color: pnl>=0?"#22c55e":"#ef4444", marginTop: 2 }}>{fmtPnl(pnl)}</span>
                       </div>
                     );
                   } else {
@@ -402,7 +417,7 @@ export default function Portfolio({
               <span className="bf2-leg-dot" style={{ background:"#f59e0b" }} /> alert
               <span className="bf2-leg-dot" style={{ background:"#ef4444" }} /> risk
               {scaleMode === "own" && <>
-                <span style={{ marginLeft: 8, color:"var(--text-muted)", fontSize: 10 }}>nodes = stage milestones · hover for detail · dot = now</span>
+                <span style={{ marginLeft: 8, color:"var(--text-muted)", fontSize: 10 }}>bar = full plan span · dot = now · nodes = stages · ruler = lane's own timeline</span>
               </>}
             </div>
           </>

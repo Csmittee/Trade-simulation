@@ -149,6 +149,42 @@ export function computeSharedOwnRuler(lanes) {
   return labels;
 }
 
+// ── Per-lane independent scale (own scale mode) ───────────────────────────────
+// Each lane fills 100% of its own bar. Now-dot and stage nodes are
+// positioned relative to that lane's own open→end span only.
+
+export function computePerLaneScale(lane) {
+  const now    = Date.now();
+  const openMs = lane.ownScaleOpenMs || now;
+  const endMs  = lane.ownScaleEndMs  || (now + 4 * 3600 * 1000);
+  const spanMs = Math.max(1, endMs - openMs);
+
+  lane.perLaneNowPct    = Math.min(1, Math.max(0, (now - openMs) / spanMs));
+  lane.perLaneNowInSpan = now >= openMs && now <= endMs;
+
+  if (lane.stageNodes?.length) {
+    lane.stageNodes = lane.stageNodes.map(node => ({
+      ...node,
+      pct: node.endMs != null
+        ? Math.min(100, Math.max(0, Math.round(((node.endMs - openMs) / spanMs) * 100)))
+        : null,
+    }));
+  }
+
+  const sameDay = spanMs < 24 * 3600 * 1000;
+  lane.perLaneRuler = Array.from({ length: 5 }, (_, i) => {
+    const pct   = i / 4;
+    const ms    = openMs + pct * spanMs;
+    const d     = new Date(ms);
+    const label = sameDay
+      ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Bangkok' })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Bangkok' });
+    return { pct: Math.round(pct * 100), label };
+  });
+
+  return lane;
+}
+
 // ── One lane per unique symbol ────────────────────────────────────────────────
 // KI011: setBundle replaced with setWorkflows dict { "PTT.BK": bundle, "SCB.BK": bundle, ... }
 

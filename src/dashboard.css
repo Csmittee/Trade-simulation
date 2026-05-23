@@ -2172,3 +2172,110 @@ a { color: var(--gold); }
   background: rgba(0,0,0,0.15);
 }
 .pos-child-qty { font-weight: 600; color: var(--text-primary); }
+
+/* ── Phase 7b — Per-lane own scale ruler ──────────────────────────────────── */
+.bf2-per-lane-ruler {
+  position: relative;
+  height: 14px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+.bf2-per-lane-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 8px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* ── Phase 7b — Curated watchlist ─────────────────────────────────────────── */
+.wl-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 6px 10px 3px;
+}
+.wl-section-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0 2px;
+}
+.wl-pinned-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.wl-pinned-main {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  background: none;
+  border: none;
+  width: 100%;
+  padding: 5px 6px 5px 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  border-left: 2px solid transparent;
+  transition: background 0.12s;
+}
+.wl-pinned-main:hover { background: var(--bg-hover); }
+.wl-pinned-main.active {
+  border-left-color: var(--gold, #f59e0b);
+  background: rgba(245,158,11,0.06);
+}
+.wl-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 4px 6px;
+  flex-shrink: 0;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.12s, color 0.12s;
+}
+.wl-remove-btn:hover { opacity: 1; color: #ef4444; }
+.wl-browse-row {
+  display: flex;
+  align-items: center;
+}
+.wl-browse-main {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  background: none;
+  border: none;
+  width: 100%;
+  padding: 5px 6px 5px 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  border-left: 2px solid transparent;
+  transition: background 0.12s;
+}
+.wl-browse-main:hover { background: var(--bg-hover); }
+.wl-browse-main.active {
+  border-left-color: var(--gold, #f59e0b);
+  background: rgba(245,158,11,0.06);
+}
+.wl-add-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+  line-height: 1;
+  color: var(--text-muted);
+  opacity: 0.55;
+  transition: opacity 0.12s, color 0.12s;
+}
+.wl-add-btn:hover { opacity: 1; color: var(--gold, #f59e0b); }
