@@ -1,10 +1,8 @@
 /**
- * D1Tab.jsx
- * Phase 8b — D1 Live Results
- * READ queries fetch real data from Worker and display as a table.
- * Every result also shows the Worker API URL + equivalent SQL so you
- * can learn what ran and copy it to Cloudflare D1 console if needed.
- * SQL-only mode (⚠️ Confirm Reset SQL) never executes — generates text only.
+ * D1Tab.jsx — Phase 8c
+ * Two-panel layout: left (query selector + fields) | right (results + SQL)
+ * Ghost Buys: 24h-old orphan filter + per-record Delete SQL generator
+ * Confirm Reset SQL removed (too dangerous)
  */
 
 import { useState, useCallback } from "react";
@@ -14,141 +12,127 @@ const WORKER = config.workers.base;
 
 // ── Query registry ────────────────────────────────────────────────────────────
 const QUERIES = [
-  { id: "recent",    label: "Recent Trades",    icon: "🕐", mode: "read" },
-  { id: "symbol",    label: "By Symbol",         icon: "🔍", mode: "read" },
-  { id: "ghost",     label: "Ghost Buys",        icon: "👻", mode: "read" },
-  { id: "executor",  label: "By Executor",       icon: "🤖", mode: "read" },
-  { id: "trash",     label: "Find Trash Data",   icon: "🗑",  mode: "read" },
-  { id: "summary",   label: "P&L Summary",       icon: "📊", mode: "read" },
-  { id: "actlog",    label: "Activity Log",      icon: "📋", mode: "read" },
-  { id: "dbcount",   label: "DB Count",          icon: "🔢", mode: "read" },
-  { id: "reset_sql", label: "Confirm Reset SQL", icon: "⚠️", mode: "sql"  },
+  { id: "recent",   label: "Recent Trades", icon: "🕐", mode: "read" },
+  { id: "symbol",   label: "By Symbol",     icon: "🔍", mode: "read" },
+  { id: "ghost",    label: "Ghost Buys",    icon: "👻", mode: "read" },
+  { id: "executor", label: "By Executor",   icon: "🤖", mode: "read" },
+  { id: "trash",    label: "Find Trash",    icon: "🗑",  mode: "read" },
+  { id: "summary",  label: "P&L Summary",  icon: "📊", mode: "read" },
+  { id: "actlog",   label: "Activity Log", icon: "📋", mode: "read" },
+  { id: "dbcount",  label: "DB Count",     icon: "🔢", mode: "read" },
 ];
 
 const QUERY_DESCS = {
-  ghost:     "Open buy positions with no exit_price — trades that vanished from radar.",
-  trash:     "Records missing critical fields — useful for spotting corrupted data.",
-  dbcount:   "Quick count of all trades. Run after Reset to confirm the database is empty.",
-  reset_sql: "Generates DELETE SQL for manual use in Cloudflare D1 console only — never executes here.",
+  ghost:   "Open buys older than 24h with no exit price — orphaned records from previous sessions",
+  trash:   "Records with missing critical fields",
+  dbcount: "Total counts across the trades table",
 };
 
 const DEFAULT_FIELDS = {
-  recent:    { period: "today", side: "all" },
-  symbol:    { symbol: "", side: "all" },
-  ghost:     {},
-  executor:  { executor: "all" },
-  trash:     {},
-  summary:   { group: "day" },
-  actlog:    { period: "today", type: "all" },
-  dbcount:   {},
-  reset_sql: {},
+  recent:   { period: "7d",  side: "all" },
+  symbol:   { symbol: "",    side: "all" },
+  ghost:    {},
+  executor: { executor: "all" },
+  trash:    {},
+  summary:  { group: "day" },
+  actlog:   { period: "7d", type: "all" },
+  dbcount:  {},
 };
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function getFromDate(period) {
-  if (!period || period === "all") return null;
-  const now = new Date();
-  if (period === "today") return now.toISOString().slice(0, 10);
-  if (period === "7d")  { now.setDate(now.getDate() - 7);  return now.toISOString().slice(0, 10); }
-  if (period === "30d") { now.setDate(now.getDate() - 30); return now.toISOString().slice(0, 10); }
+  if (period === "today") return new Date().toISOString().slice(0, 10);
+  if (period === "7d")  { const d = new Date(); d.setDate(d.getDate() - 7);  return d.toISOString().slice(0, 10); }
+  if (period === "30d") { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); }
   return null;
 }
 
 // ── Fetch logic ───────────────────────────────────────────────────────────────
-async function fetchQuery(queryId, fields) {
-  let fetchUrl;
+async function fetchResults(queryId, fields) {
+  const params = new URLSearchParams({ limit: 200 });
 
-  switch (queryId) {
-    case "recent": {
-      const from = getFromDate(fields.period);
-      const p = new URLSearchParams({ limit: "200" });
-      if (from) p.set("from", from);
-      if (fields.side && fields.side !== "all") p.set("side", fields.side);
-      fetchUrl = `${WORKER}/api/trades?${p}`;
-      break;
-    }
-    case "symbol": {
-      const raw = (fields.symbol || "").trim().toUpperCase();
-      const sym = raw && !raw.includes(".BK") ? raw + ".BK" : raw;
-      const p = new URLSearchParams({ limit: "200" });
-      if (sym) p.set("symbol", sym);
-      if (fields.side && fields.side !== "all") p.set("side", fields.side);
-      fetchUrl = `${WORKER}/api/trades?${p}`;
-      break;
-    }
-    case "ghost":
-      fetchUrl = `${WORKER}/api/trades?open=true&limit=200`;
-      break;
-    case "executor": {
-      const p = new URLSearchParams({ limit: "200" });
-      if (fields.executor && fields.executor !== "all") p.set("executor", fields.executor);
-      fetchUrl = `${WORKER}/api/trades?${p}`;
-      break;
-    }
-    case "trash":
-      fetchUrl = `${WORKER}/api/trades?trash=true&limit=200`;
-      break;
-    case "summary":
-      fetchUrl = `${WORKER}/api/trades/summary?group=${fields.group || "day"}`;
-      break;
-    case "actlog": {
-      const from = getFromDate(fields.period);
-      const p = new URLSearchParams({ limit: "200" });
-      if (from) p.set("from", from);
-      if (fields.type && fields.type !== "all") p.set("type", fields.type);
-      fetchUrl = `${WORKER}/api/logs?${p}`;
-      break;
-    }
-    case "dbcount":
-      fetchUrl = `${WORKER}/api/trades/count`;
-      break;
-    default:
-      return { rows: [], fetchUrl: "", error: "Unknown query type" };
+  if (queryId === "recent") {
+    const from = getFromDate(fields.period || "7d");
+    if (from) params.set("from", from);
+    if (fields.side && fields.side !== "all") params.set("side", fields.side);
+    const res = await fetch(`${WORKER}/api/trades?${params}`);
+    return (await res.json()).data || [];
   }
-
-  try {
-    const res  = await fetch(fetchUrl);
-    const json = await res.json();
-    const rows = json.data
-      ? (Array.isArray(json.data) ? json.data : [json.data])
-      : [];
-    return { rows, fetchUrl, error: json.error || null };
-  } catch (err) {
-    return { rows: [], fetchUrl, error: err.message };
+  if (queryId === "symbol") {
+    let sym = (fields.symbol || "").trim().toUpperCase();
+    if (sym && !sym.includes(".")) sym += ".BK";
+    if (sym) params.set("symbol", sym);
+    if (fields.side && fields.side !== "all") params.set("side", fields.side);
+    const res = await fetch(`${WORKER}/api/trades?${params}`);
+    return (await res.json()).data || [];
   }
+  if (queryId === "ghost") {
+    // Only orphans older than 24h — excludes today's active positions
+    const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const res = await fetch(`${WORKER}/api/trades?open=true&before=${cutoff}&limit=200`);
+    return (await res.json()).data || [];
+  }
+  if (queryId === "executor") {
+    if (fields.executor && fields.executor !== "all") params.set("executor", fields.executor);
+    const res = await fetch(`${WORKER}/api/trades?${params}`);
+    return (await res.json()).data || [];
+  }
+  if (queryId === "trash") {
+    const res = await fetch(`${WORKER}/api/trades?trash=true&limit=200`);
+    return (await res.json()).data || [];
+  }
+  if (queryId === "summary") {
+    const res = await fetch(`${WORKER}/api/trades/summary?group=${fields.group || "day"}`);
+    return (await res.json()).data || [];
+  }
+  if (queryId === "actlog") {
+    const from = getFromDate(fields.period || "7d");
+    if (from) params.set("from", from);
+    if (fields.type && fields.type !== "all") params.set("type", fields.type);
+    const res = await fetch(`${WORKER}/api/logs?${params}`);
+    return (await res.json()).data || [];
+  }
+  if (queryId === "dbcount") {
+    const res = await fetch(`${WORKER}/api/trades/count`);
+    const d = await res.json();
+    return d.data ? [d.data] : [];
+  }
+  return [];
 }
 
-// ── Equivalent SQL builder (mirrors Worker query logic) ───────────────────────
-function buildEquivalentSQL(queryId, fields) {
+// ── SQL generator ─────────────────────────────────────────────────────────────
+function generateSQL(queryId, fields) {
   const from = getFromDate(fields.period) || "—";
 
   switch (queryId) {
     case "recent": {
       const lines = [`SELECT * FROM trades\nWHERE opened_at >= '${from}'`];
       if (fields.side && fields.side !== "all") lines.push(`  AND side = '${fields.side}'`);
-      lines.push("ORDER BY opened_at DESC\nLIMIT 200;");
+      lines.push("ORDER BY opened_at DESC LIMIT 200;");
       return lines.join("\n");
     }
     case "symbol": {
-      const raw = (fields.symbol || "").trim().toUpperCase();
-      const sym = raw && !raw.includes(".BK") ? raw + ".BK" : (raw || "SYMBOL");
-      const lines = [`SELECT * FROM trades\nWHERE symbol = '${sym}'`];
+      let sym = (fields.symbol || "").trim().toUpperCase();
+      if (sym && !sym.includes(".")) sym += ".BK";
+      const lines = [`SELECT * FROM trades\nWHERE symbol = '${sym || "SYMBOL"}'`];
       if (fields.side && fields.side !== "all") lines.push(`  AND side = '${fields.side}'`);
-      lines.push("ORDER BY opened_at DESC\nLIMIT 200;");
+      lines.push("ORDER BY opened_at DESC LIMIT 200;");
       return lines.join("\n");
     }
-    case "ghost":
-      return "SELECT * FROM trades\nWHERE side = 'buy'\n  AND (exit_price IS NULL OR closed_at IS NULL)\nORDER BY opened_at DESC\nLIMIT 200;";
+    case "ghost": {
+      const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+      return `SELECT * FROM trades\nWHERE side = 'buy'\n  AND (exit_price IS NULL OR closed_at IS NULL)\n  AND opened_at < '${cutoff}'\nORDER BY opened_at DESC;`;
+    }
     case "executor": {
       const where =
-        fields.executor === "preset"  ? "WHERE strategy != 'manual'\n  AND strategy NOT LIKE 'ai_%'"
-        : fields.executor === "ai"    ? "WHERE strategy LIKE 'ai_%'\n   OR strategy = 'ai_workflow'"
+        fields.executor === "preset"   ? "WHERE strategy != 'manual'\n  AND strategy NOT LIKE 'ai_%'"
+        : fields.executor === "ai"     ? "WHERE (strategy LIKE 'ai_%'\n   OR strategy = 'ai_workflow')"
         : fields.executor === "manual" ? "WHERE strategy = 'manual'"
-        :                               "WHERE 1=1 -- all executors";
-      return `SELECT * FROM trades\n${where}\nORDER BY opened_at DESC\nLIMIT 200;`;
+        :                                "WHERE 1=1 -- all executors";
+      return `SELECT * FROM trades\n${where}\nORDER BY opened_at DESC LIMIT 200;`;
     }
     case "trash":
-      return "SELECT * FROM trades\nWHERE symbol IS NULL\n   OR market IS NULL\n   OR qty IS NULL\n   OR entry_price IS NULL\n   OR opened_at IS NULL\nORDER BY opened_at DESC\nLIMIT 200;";
+      return "SELECT * FROM trades\nWHERE symbol IS NULL OR market IS NULL\n   OR qty IS NULL OR entry_price IS NULL OR opened_at IS NULL;";
     case "summary": {
       const grp =
         fields.group === "week"  ? "strftime('%Y-W%W', closed_at)"
@@ -157,36 +141,26 @@ function buildEquivalentSQL(queryId, fields) {
       return [
         `SELECT ${grp} as period,`,
         "       COUNT(*) as trades,",
-        "       ROUND(SUM(pnl), 2) as total_pnl,",
-        "       SUM(CASE WHEN pnl > 0  THEN 1 ELSE 0 END) as wins,",
-        "       SUM(CASE WHEN pnl <= 0 THEN 1 ELSE 0 END) as losses",
-        "FROM trades",
-        "WHERE side = 'sell' AND pnl IS NOT NULL",
-        `GROUP BY ${grp}`,
-        "ORDER BY period DESC LIMIT 90;",
+        "       ROUND(SUM(pnl),2) as total_pnl,",
+        "       SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END) as wins,",
+        "       SUM(CASE WHEN pnl<=0 THEN 1 ELSE 0 END) as losses",
+        "FROM trades WHERE side='sell' AND pnl IS NOT NULL",
+        `GROUP BY ${grp} ORDER BY period DESC;`,
       ].join("\n");
     }
     case "actlog": {
       const lines = [`SELECT * FROM activity_log\nWHERE created_at >= '${from}'`];
       if (fields.type && fields.type !== "all") lines.push(`  AND type = '${fields.type}'`);
-      lines.push("ORDER BY created_at DESC\nLIMIT 200;");
+      lines.push("ORDER BY created_at DESC LIMIT 200;");
       return lines.join("\n");
     }
     case "dbcount":
       return [
         "SELECT COUNT(*) as total_trades,",
-        "       COUNT(CASE WHEN side = 'buy'  THEN 1 END) as buys,",
-        "       COUNT(CASE WHEN side = 'sell' THEN 1 END) as sells,",
-        "       COUNT(CASE WHEN side = 'buy' AND exit_price IS NULL THEN 1 END) as open_buys",
+        "       COUNT(CASE WHEN side='buy' THEN 1 END) as buys,",
+        "       COUNT(CASE WHEN side='sell' THEN 1 END) as sells,",
+        "       COUNT(CASE WHEN side='buy' AND exit_price IS NULL THEN 1 END) as open_buys",
         "FROM trades;",
-      ].join("\n");
-    case "reset_sql":
-      return [
-        "-- ⚠️  WARNING: This permanently deletes ALL trade records",
-        "-- Run ONLY in Cloudflare D1 console after full confirmation",
-        "DELETE FROM trades;",
-        "DELETE FROM activity_log;",
-        "-- Verify: SELECT COUNT(*) FROM trades;",
       ].join("\n");
     default:
       return "";
@@ -239,28 +213,39 @@ const DBCOUNT_COLS = [
 
 function getColumns(queryId) {
   if (["recent", "symbol", "ghost", "executor", "trash"].includes(queryId)) return TRADE_COLS;
-  if (queryId === "summary")  return SUMMARY_COLS;
-  if (queryId === "actlog")   return ACTLOG_COLS;
-  if (queryId === "dbcount")  return DBCOUNT_COLS;
+  if (queryId === "summary") return SUMMARY_COLS;
+  if (queryId === "actlog")  return ACTLOG_COLS;
+  if (queryId === "dbcount") return DBCOUNT_COLS;
   return [];
 }
 
 function getRowClass(queryId, row) {
   if (queryId === "ghost") return "d1-row--ghost";
+  if (!row.exit_price && row.side === "buy") return "d1-row--ghost";
   if (row.pnl != null && row.pnl > 0) return "d1-row--win";
   if (row.pnl != null && row.pnl < 0) return "d1-row--loss";
-  if (!row.exit_price && row.side === "buy") return "d1-row--ghost";
   return "";
 }
 
-// ── Field renderers ───────────────────────────────────────────────────────────
+// ── Copy hook ─────────────────────────────────────────────────────────────────
+function useCopy() {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback((text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, []);
+  return [copied, copy];
+}
+
+// ── Field inputs per query ────────────────────────────────────────────────────
 function QueryFields({ queryId, fields, onChange }) {
   const set = (k, v) => onChange({ ...fields, [k]: v });
-
   switch (queryId) {
     case "recent":
       return (
-        <div className="d1-fields">
+        <>
           <div className="d1-field">
             <label>Period</label>
             <select value={fields.period} onChange={e => set("period", e.target.value)}>
@@ -278,18 +263,18 @@ function QueryFields({ queryId, fields, onChange }) {
               <option value="sell">Sell only</option>
             </select>
           </div>
-        </div>
+        </>
       );
     case "symbol":
       return (
-        <div className="d1-fields">
+        <>
           <div className="d1-field">
             <label>Symbol</label>
             <input
               type="text"
               value={fields.symbol}
               onChange={e => set("symbol", e.target.value)}
-              placeholder="e.g. GULF or GULF.BK"
+              placeholder="e.g. GULF"
             />
           </div>
           <div className="d1-field">
@@ -300,43 +285,40 @@ function QueryFields({ queryId, fields, onChange }) {
               <option value="sell">Sell only</option>
             </select>
           </div>
-        </div>
+        </>
       );
     case "executor":
       return (
-        <div className="d1-fields">
-          <div className="d1-field">
-            <label>Executor</label>
-            <select value={fields.executor} onChange={e => set("executor", e.target.value)}>
-              <option value="all">All</option>
-              <option value="manual">Manual</option>
-              <option value="preset">Preset Strategy</option>
-              <option value="ai">AI Workflow</option>
-            </select>
-          </div>
+        <div className="d1-field">
+          <label>Executor</label>
+          <select value={fields.executor} onChange={e => set("executor", e.target.value)}>
+            <option value="all">All</option>
+            <option value="manual">Manual</option>
+            <option value="preset">Preset Strategy</option>
+            <option value="ai">AI Workflow</option>
+          </select>
         </div>
       );
     case "summary":
       return (
-        <div className="d1-fields">
-          <div className="d1-field">
-            <label>Group by</label>
-            <select value={fields.group} onChange={e => set("group", e.target.value)}>
-              <option value="day">Day</option>
-              <option value="week">Week</option>
-              <option value="month">Month</option>
-            </select>
-          </div>
+        <div className="d1-field">
+          <label>Group by</label>
+          <select value={fields.group} onChange={e => set("group", e.target.value)}>
+            <option value="day">Day</option>
+            <option value="week">Week</option>
+            <option value="month">Month</option>
+          </select>
         </div>
       );
     case "actlog":
       return (
-        <div className="d1-fields">
+        <>
           <div className="d1-field">
             <label>Period</label>
             <select value={fields.period} onChange={e => set("period", e.target.value)}>
               <option value="today">Today</option>
               <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
             </select>
           </div>
           <div className="d1-field">
@@ -345,228 +327,228 @@ function QueryFields({ queryId, fields, onChange }) {
               <option value="all">All</option>
               <option value="buy">buy</option>
               <option value="sell">sell</option>
-              <option value="block">block</option>
               <option value="strategy">strategy</option>
+              <option value="block">block</option>
             </select>
           </div>
-        </div>
+        </>
       );
     default:
       return null;
   }
 }
 
-// ── Copy helper ───────────────────────────────────────────────────────────────
-function useCopy() {
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback((text) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, []);
-  return [copied, copy];
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 export default function D1Tab() {
   const [selectedQuery, setSelectedQuery] = useState(null);
   const [fields,        setFields]        = useState({});
-  const [rows,          setRows]          = useState(null);
-  const [loading,       setLoading]       = useState(false);
-  const [fetchError,    setFetchError]    = useState(null);
-  const [lastFetchUrl,  setLastFetchUrl]  = useState("");
+  const [results,       setResults]       = useState([]);
   const [generatedSQL,  setGeneratedSQL]  = useState("");
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState("");
+  const [showSQL,       setShowSQL]       = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [deleteSQL,     setDeleteSQL]     = useState("");
 
   const [copiedSQL, copySQL] = useCopy();
-  const [copiedURL, copyURL] = useCopy();
+  const [copiedDel, copyDel] = useCopy();
 
   const selectQuery = useCallback((id) => {
     setSelectedQuery(id);
     setFields(DEFAULT_FIELDS[id] || {});
-    setRows(null);
-    setFetchError(null);
-    setLastFetchUrl("");
+    setResults([]);
+    setError("");
     setGeneratedSQL("");
+    setDeleteSQL("");
+    setShowSQL(false);
   }, []);
 
-  const handleRun = useCallback(async () => {
+  const handleFetch = useCallback(async () => {
     if (!selectedQuery) return;
-    const query = QUERIES.find(q => q.id === selectedQuery);
-
-    if (query.mode === "sql") {
-      setGeneratedSQL(buildEquivalentSQL(selectedQuery, fields));
-      return;
-    }
-
     setLoading(true);
-    setFetchError(null);
-    setRows(null);
-    setLastFetchUrl("");
+    setError("");
+    setResults([]);
+    setDeleteSQL("");
     try {
-      const result = await fetchQuery(selectedQuery, fields);
-      setRows(result.rows);
-      setLastFetchUrl(result.fetchUrl || "");
-      if (result.error) setFetchError(result.error);
+      const rows = await fetchResults(selectedQuery, fields);
+      setResults(rows);
     } catch (err) {
-      setFetchError(err.message);
-      setRows([]);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }, [selectedQuery, fields]);
 
-  const query     = QUERIES.find(q => q.id === selectedQuery);
-  const isSQLMode = query?.mode === "sql";
-  const cols      = selectedQuery ? getColumns(selectedQuery) : [];
-  const equivSQL  = rows !== null ? buildEquivalentSQL(selectedQuery, fields) : "";
-  const relUrl    = lastFetchUrl ? lastFetchUrl.replace(WORKER, "") : "";
+  const handleGetSQL = useCallback(() => {
+    if (!selectedQuery) return;
+    setGeneratedSQL(generateSQL(selectedQuery, fields));
+    setShowSQL(true);
+  }, [selectedQuery, fields]);
+
+  const handleGenerateDeleteSQL = useCallback(() => {
+    if (!results.length) return;
+    const ids = results.map(r => `  '${r.id}'`).join(",\n");
+    const sql = [
+      `-- ⚠️ Deletes ${results.length} ghost buy records permanently`,
+      "-- Paste ONLY in Cloudflare Dashboard → D1 → tts-db → Console → Run",
+      "DELETE FROM trades",
+      "WHERE id IN (",
+      ids,
+      ");",
+      "-- Verify after: SELECT COUNT(*) FROM trades WHERE side='buy' AND exit_price IS NULL;",
+    ].join("\n");
+    setDeleteSQL(sql);
+  }, [results]);
+
+  const query         = QUERIES.find(q => q.id === selectedQuery);
+  const cols          = selectedQuery ? getColumns(selectedQuery) : [];
+  const showDeleteBtn = selectedQuery === "ghost" && results.length > 0 && !deleteSQL;
 
   return (
-    <div className="d1-tab">
+    <div className="d1-wrap">
 
-      <div className="d1-header">
-        <h2>🗄 D1 Query Builder</h2>
-        <p>READ queries fetch live data from D1. Each result shows the API call + equivalent SQL so you can learn and copy for manual use. The ⚠️ query generates DELETE SQL only — never executes.</p>
-      </div>
+      {/* ── LEFT PANEL ── */}
+      {!leftCollapsed && (
+        <div className="d1-left">
+          <div className="d1-left-header">🗄 D1 Query Builder</div>
+          <div className="d1-left-sub">Pick a query, set filters, fetch live results or copy SQL</div>
 
-      {/* ── 9-button picker grid ── */}
-      <div className="d1-query-grid">
-        {QUERIES.map(q => (
-          <button
-            key={q.id}
-            className={`d1-query-btn ${selectedQuery === q.id ? "active" : ""} ${q.mode === "sql" ? "d1-query-btn--sql" : ""}`}
-            onClick={() => selectQuery(q.id)}
-          >
-            <div>{q.icon}</div>
-            <div>{q.label}</div>
-          </button>
-        ))}
-      </div>
+          <div className="d1-query-grid">
+            {QUERIES.map(q => (
+              <button
+                key={q.id}
+                className={`d1-query-btn ${selectedQuery === q.id ? "active" : ""}`}
+                onClick={() => selectQuery(q.id)}
+              >
+                <div>{q.icon}</div>
+                <div>{q.label}</div>
+              </button>
+            ))}
+          </div>
 
-      {/* ── Selected query: desc + fields + run/generate button ── */}
-      {selectedQuery && (
-        <div className="d1-query-panel">
-          <div className="d1-query-title">{query?.icon} {query?.label}</div>
-          {QUERY_DESCS[selectedQuery] && (
-            <div className="d1-query-desc">{QUERY_DESCS[selectedQuery]}</div>
+          {selectedQuery && (
+            <>
+              <hr className="d1-divider" />
+              <div className="d1-query-title">{query?.icon} {query?.label}</div>
+              {QUERY_DESCS[selectedQuery] && (
+                <div className="d1-query-desc">{QUERY_DESCS[selectedQuery]}</div>
+              )}
+              <QueryFields queryId={selectedQuery} fields={fields} onChange={setFields} />
+              <div className="d1-action-row">
+                <button className="d1-fetch-btn" onClick={handleFetch} disabled={loading}>
+                  {loading ? "Fetching…" : "Fetch Results"}
+                </button>
+                <button
+                  className={`d1-sql-btn ${showSQL ? "active" : ""}`}
+                  onClick={handleGetSQL}
+                >
+                  SQL
+                </button>
+              </div>
+            </>
           )}
-          <QueryFields queryId={selectedQuery} fields={fields} onChange={setFields} />
-          <button className="d1-generate-btn" onClick={handleRun}>
-            {isSQLMode ? "Generate SQL" : "Fetch Results"}
-          </button>
+
+          <div className="d1-instructions">
+            <div className="d1-instructions-title">Run SQL manually</div>
+            <ol>
+              <li>Cloudflare → D1 → <code>tts-db</code> → Console</li>
+              <li>Paste SQL → click Run</li>
+            </ol>
+          </div>
         </div>
       )}
 
-      {/* ── SQL mode: warning banner + SQL output ── */}
-      {isSQLMode && generatedSQL && (
-        <>
-          <div className="d1-warning-banner">
-            ⚠️ This SQL permanently deletes all data. Copy and paste in Cloudflare D1 console only — never paste here.
-          </div>
-          <div className="d1-output">
-            <div className="d1-output-label">Generated SQL</div>
-            <pre className="d1-sql-block">{generatedSQL}</pre>
-            <button className={`d1-copy-btn ${copiedSQL ? "success" : ""}`} onClick={() => copySQL(generatedSQL)}>
-              {copiedSQL ? "Copied ✓" : "Copy to clipboard"}
-            </button>
-          </div>
-        </>
-      )}
+      {/* ── RIGHT PANEL ── */}
+      <div className="d1-right">
 
-      {/* ── READ mode: loading spinner ── */}
-      {!isSQLMode && loading && (
-        <div className="d1-loading">⏳ Fetching from D1...</div>
-      )}
+        {/* Right header bar */}
+        <div className="d1-right-header">
+          <button className="d1-toggle-btn" onClick={() => setLeftCollapsed(v => !v)}>
+            {leftCollapsed ? "show controls ▶" : "◀ hide controls"}
+          </button>
+          <span className="d1-right-title">
+            {query ? `${query.icon} ${query.label}` : "Select a query ←"}
+          </span>
+          {results.length > 0 && (
+            <span className="d1-record-count">{results.length} records</span>
+          )}
+        </div>
 
-      {/* ── READ mode: error ── */}
-      {!isSQLMode && fetchError && (
-        <div className="d1-error">⚠ {fetchError}</div>
-      )}
+        {/* Loading */}
+        {loading && <div className="d1-loading">⏳ Fetching from D1…</div>}
 
-      {/* ── READ mode: results table + under the hood ── */}
-      {!isSQLMode && rows !== null && !loading && (
-        <>
-          <div className="d1-results-section">
-            <div className="d1-results-header">
-              <span className="d1-results-count">
-                {rows.length} record{rows.length !== 1 ? "s" : ""} found
-              </span>
-              <span>{query?.label}</span>
-            </div>
+        {/* Error */}
+        {!loading && error && <div className="d1-error">⚠ {error}</div>}
 
-            {rows.length === 0 ? (
-              <div className="d1-empty">No records found for this query.</div>
-            ) : (
-              <div className="d1-table-wrap">
-                <table className="d1-table">
-                  <thead>
-                    <tr>{cols.map(c => <th key={c.key}>{c.label}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, i) => (
-                      <tr key={i} className={getRowClass(selectedQuery, row)}>
-                        {cols.map(c => (
-                          <td
-                            key={c.key}
-                            className={
-                              (c.key === "pnl" || c.key === "total_pnl")
-                                ? (row[c.key] > 0 ? "d1-pnl-up" : row[c.key] < 0 ? "d1-pnl-down" : "")
-                                : ""
-                            }
-                          >
-                            {c.fmt ? c.fmt(row[c.key]) : (row[c.key] ?? "—")}
-                          </td>
-                        ))}
-                      </tr>
+        {/* Results table */}
+        {!loading && !error && results.length > 0 && (
+          <div className="d1-table-wrap">
+            <table className="d1-table">
+              <thead>
+                <tr>{cols.map(c => <th key={c.key}>{c.label}</th>)}</tr>
+              </thead>
+              <tbody>
+                {results.map((row, i) => (
+                  <tr key={i} className={getRowClass(selectedQuery, row)}>
+                    {cols.map(c => (
+                      <td
+                        key={c.key}
+                        className={
+                          (c.key === "pnl" || c.key === "total_pnl")
+                            ? (row[c.key] > 0 ? "d1-pnl-up" : row[c.key] < 0 ? "d1-pnl-down" : "")
+                            : ""
+                        }
+                      >
+                        {c.fmt ? c.fmt(row[c.key]) : (row[c.key] ?? "—")}
+                      </td>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        )}
 
-          {/* ── Under the hood — always shown after every fetch ── */}
-          <div className="d1-under-hood">
-            <div className="d1-under-hood-title">🔍 How this was fetched</div>
+        {/* Empty state */}
+        {!loading && !error && results.length === 0 && selectedQuery && (
+          <div className="d1-empty">No records found. Try different filters or click Fetch Results.</div>
+        )}
 
-            <div className="d1-under-hood-block">
-              <div className="d1-under-hood-label">Worker API call (GET)</div>
-              <div className="d1-url-row">
-                <code className="d1-url-code">{relUrl}</code>
-                <button
-                  className={`d1-copy-btn d1-copy-btn--sm ${copiedURL ? "success" : ""}`}
-                  onClick={() => copyURL(lastFetchUrl)}
-                >
-                  {copiedURL ? "Copied ✓" : "Copy URL"}
-                </button>
-              </div>
+        {/* Ghost buys: Delete SQL generator button */}
+        {showDeleteBtn && (
+          <button className="d1-delete-btn" onClick={handleGenerateDeleteSQL}>
+            ⚠️ Generate Delete SQL for these {results.length} records
+          </button>
+        )}
+
+        {/* Delete SQL output */}
+        {deleteSQL && (
+          <div className="d1-sql-panel">
+            <div className="d1-warning-banner">
+              ⚠️ Permanently deletes {results.length} records. Paste ONLY in Cloudflare D1 console.
             </div>
+            <pre className="d1-sql-block">{deleteSQL}</pre>
+            <div className="d1-sql-actions">
+              <button className={`d1-copy-btn ${copiedDel ? "success" : ""}`} onClick={() => copyDel(deleteSQL)}>
+                {copiedDel ? "Copied ✓" : "Copy Delete SQL"}
+              </button>
+            </div>
+          </div>
+        )}
 
-            <div className="d1-under-hood-block">
-              <div className="d1-under-hood-label">Equivalent D1 SQL</div>
-              <pre className="d1-sql-block d1-sql-block--sm">{equivSQL}</pre>
-              <button
-                className={`d1-copy-btn d1-copy-btn--sm ${copiedSQL ? "success" : ""}`}
-                onClick={() => copySQL(equivSQL)}
-              >
+        {/* SQL panel (Get SQL button) */}
+        {showSQL && generatedSQL && (
+          <div className="d1-sql-panel">
+            <pre className="d1-sql-block">{generatedSQL}</pre>
+            <div className="d1-sql-actions">
+              <button className={`d1-copy-btn ${copiedSQL ? "success" : ""}`} onClick={() => copySQL(generatedSQL)}>
                 {copiedSQL ? "Copied ✓" : "Copy SQL"}
               </button>
             </div>
           </div>
-        </>
-      )}
+        )}
 
-      {/* ── Instructions (always visible) ── */}
-      <div className="d1-instructions">
-        <div className="d1-instructions-title">How to run SQL manually in Cloudflare</div>
-        <ol>
-          <li>Go to <code>dash.cloudflare.com</code> → <code>Workers &amp; Pages</code> → <code>D1</code></li>
-          <li>Open database <code>tts-db</code> → click the <code>Console</code> tab</li>
-          <li>Paste the SQL from "Equivalent D1 SQL" above → click <code>Run</code></li>
-        </ol>
       </div>
-
     </div>
   );
 }

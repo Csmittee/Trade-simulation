@@ -485,6 +485,9 @@ async function handleTrades(request, env) {
         query += " AND opened_at >= ?"; params.push(cutoff);
       }
 
+      const before = url.searchParams.get("before") || null;
+      if (before) { query += " AND opened_at < ?"; params.push(before); }
+
       if (openOnly) {
         query += " AND side = 'buy' AND (exit_price IS NULL OR closed_at IS NULL)";
       }
