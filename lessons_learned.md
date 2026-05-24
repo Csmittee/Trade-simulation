@@ -442,3 +442,25 @@ const daysAgo = n  => new Date(Date.now() - n * 86400000).toISOString().slice(0,
 | AI model | Always `claude-sonnet-4-20250514` — never change this |
 | CC file writes | Always read from repo first, then write complete replacement — never patch |
 | CC self-logging | CC must update masterseed.md + lessons_learned.md after every fix commit (L077) |
+
+### L093 — Two-Panel Layout: min-height: 0 Is Non-Negotiable for Flex Scroll
+**Problem:** Table inside a flex child didn't scroll — it grew the container instead. `overflow-y: auto` on `.d1-table-wrap` had no effect.
+**Solution:** Add `min-height: 0` to the flex child (`.d1-table-wrap`). Without it, flex items default to `min-height: auto`, which lets them grow past the container and breaks overflow scroll.
+**Rule:** Any scrollable flex child needs `min-height: 0`. This is one of the most common flex scroll bugs.
+**Tag:** #css #flex #scroll #phase8c
+
+### L094 — Sticky Table Headers Require position: sticky + top: 0 + z-index on th
+**Problem:** Table headers scrolled away with the content when the table was in a scrollable container.
+**Solution:** `position: sticky; top: 0; z-index: 1` on `th`. The sticky context is the nearest scrolling ancestor (`.d1-table-wrap`), not the viewport.
+**Tag:** #css #table #sticky #phase8c
+
+### L095 — Ghost Buy Filter: Exclude Today's Active Positions With a 24h Cutoff
+**Problem:** Ghost buys query (`open=true`) returned all open buys including today's active positions, which confused the user.
+**Solution:** Add `before=YYYY-MM-DD` param (yesterday's date) to exclude any buy opened in the last 24h. Active positions are never shown as "ghost" orphans.
+**Worker:** Requires `before` param in GET `/api/trades` → `AND opened_at < ?`.
+**Tag:** #d1 #ghost #ux #phase8c
+
+### L096 — Delete SQL Generator: Build IN (id1, id2...) From Live Results
+**Problem:** User needed a safe way to clean up ghost buy orphans without accidentally deleting good records.
+**Solution:** After ghost buy results load, show a "Generate Delete SQL" button. Clicking it builds a `DELETE FROM trades WHERE id IN (...)` statement with the exact IDs from the result set. User copies and pastes in Cloudflare D1 console. Never executes from the app.
+**Tag:** #d1 #sql #ghost #safety #phase8c

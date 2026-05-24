@@ -1,6 +1,6 @@
 # 🌱 MASTERSEED — Thai Trading Simulator (TTS)
 > Resume any new chat or CC session from this file. Always read `lessons_learned.md` too.
-> **Last Updated:** 2026-05-23 — Phase 8b complete. D1 tab shows live results from Worker. No broken state.
+> **Last Updated:** 2026-05-24 — Phase 8c complete. D1 tab two-panel layout, ghost fix, delete SQL generator. No broken state.
 
 ---
 
@@ -78,6 +78,7 @@
 | 7b | Per-lane own scale ruler + curated KV watchlist | ✅ COMPLETE |
 | 8  | D1 Query Builder tab — click-to-generate SQL | ✅ COMPLETE |
 | 8b | D1 tab live results — real fetch from Worker, SQL generator for destructive ops | ✅ COMPLETE |
+| 8c | D1 tab two-panel layout, ghost fix (24h cutoff), delete SQL generator, scroll fix | ✅ COMPLETE |
 | 7 | Portfolio Battlefield — AI advisor sync to Gold/SET + executable plan | ⬜ NOT STARTED |
 | 9 | SET selection UX overhaul (watchlist, buy list, better graph, search) | ⬜ BACKLOG |
 | 9 | D1 Tab — deep log viewer + manual adjustment interface | ⬜ BACKLOG |
@@ -89,7 +90,7 @@
 
 ## CURRENT BROKEN STATE
 
-✅ No broken state as of Phase 8b (2026-05-23).
+✅ No broken state as of Phase 8c (2026-05-24).
 
 ---
 
@@ -121,7 +122,8 @@ docs/prompts/
 ├── CC_PROMPT_phase7a_grouped_positions.md   ✅ COMPLETE
 ├── CC_PROMPT_phase7b_watchlist_ownscale.md  ✅ COMPLETE
 ├── CC_PROMPT_phase8_d1tab.md                ✅ COMPLETE
-└── CC_PROMPT_phase8b_d1_live.md             ✅ COMPLETE
+├── CC_PROMPT_phase8b_d1_live.md             ✅ COMPLETE
+└── CC_PROMPT_phase8c_d1_fixes.md           ✅ COMPLETE
 ```
 New prompt files go to `docs/prompts/` before execution, then stamped COMPLETE after.
 
@@ -166,7 +168,7 @@ index.js    routes: /api/gold, /api/history, /api/set,
     │   └── portfolio-injector.js ✅ Phase 7b — computePerLaneScale, computeSharedOwnRuler, computeUniqueLanes
     └── pages/
         ├── Dashboard.jsx       ✅ Phase 8 — D1Tab import, 4th tab entry, D1Tab render
-        ├── D1Tab.jsx           ✅ Phase 8b — 8 live READ queries + 1 SQL-only reset; "Under the hood" panel shows API URL + SQL
+        ├── D1Tab.jsx           ✅ Phase 8c — two-panel layout, ghost 24h filter, delete SQL generator, SQL toggle
         ├── GoldMarket.jsx      ✅ Working
         ├── SetMarket.jsx       ✅ Phase 7b — curated watchlist panel, watchlistCollapsed=true, new props
         └── Portfolio.jsx       ✅ Phase 7b — per-lane own scale (visibleLanesOwn, bf2-per-lane-ruler)

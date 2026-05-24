@@ -1,3 +1,11 @@
+> **STATUS: ✅ COMPLETE — Phase 8c executed 2026-05-24**
+> Two-panel layout, ghost buy 24h filter, delete SQL generator, scroll/sticky header fixes.
+> Worker: `before=` param added to GET /api/trades.
+> Committed: `feat: D1 tab two-panel layout, scroll, ghost fix, SQL toggle, delete generator (Phase 8c)`
+> **Worker note:** Must manually paste index.js into Cloudflare Worker editor → Save & Deploy (L010).
+
+---
+
 # CC PROMPT — Phase 8c: D1 Tab Complete Overhaul
 # Paste this entire block into Claude Code
 
