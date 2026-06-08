@@ -387,17 +387,8 @@ export default function D1Tab() {
 
   const handleGenerateDeleteSQL = useCallback(() => {
     if (!results.length) return;
-    const ids = results.map(r => `  '${r.id}'`).join(",\n");
-    const sql = [
-      `-- ⚠️ Deletes ${results.length} ghost buy records permanently`,
-      "-- Paste ONLY in Cloudflare Dashboard → D1 → tts-db → Console → Run",
-      "DELETE FROM trades",
-      "WHERE id IN (",
-      ids,
-      ");",
-      "-- Verify after: SELECT COUNT(*) FROM trades WHERE side='buy' AND exit_price IS NULL;",
-    ].join("\n");
-    setDeleteSQL(sql);
+    const ids = results.map(r => `'${r.id}'`).join(", ");
+    setDeleteSQL(`DELETE FROM trades WHERE id IN (${ids});`);
   }, [results]);
 
   const query         = QUERIES.find(q => q.id === selectedQuery);
